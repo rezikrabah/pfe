@@ -7,6 +7,8 @@ import 'package:test2/client/suivi.dart';
 import 'package:test2/pages/Login.dart';
 import 'package:test2/pages/RoleSelectionScreen.dart';
 
+import '../services/api_service.dart';
+
 void main() => runApp(
     MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -182,7 +184,7 @@ class _clientpageState extends State<clientpage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => commandes(),
+                      builder: (context) => commandes(clientId: int.tryParse(ApiService.userId ?? '0') ?? 0,),
                     ),
                   );
                 },
@@ -390,7 +392,7 @@ class _clientpageState extends State<clientpage> {
                  Navigator.push(
                    context,
                    MaterialPageRoute(
-                     builder: (context) => commandes(),
+                     builder: (context) => commandes(clientId: int.tryParse(ApiService.userId ?? '0') ?? 0,),
                    ),
                  );
                },
@@ -478,7 +480,7 @@ class _clientpageState extends State<clientpage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => commandes(),
+                      builder: (context) => commandes(clientId: int.tryParse(ApiService.userId ?? '0') ?? 0,),
                     ),
                   );
 

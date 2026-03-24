@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:test2/client/profile.dart';
 import 'package:test2/client/suivi.dart';
 
+import '../services/api_service.dart';
 import 'clientpage.dart';
 import 'commandes.dart';
 void main() => runApp(
@@ -453,7 +454,7 @@ class _historiqueState extends State<historique> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => commandes(),
+                          builder: (context) => commandes(clientId: int.tryParse(ApiService.userId ?? '0') ?? 0,),
                         ),
                       );
 

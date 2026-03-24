@@ -17,10 +17,12 @@ class Login extends StatefulWidget {
   @override
   State<Login> createState() => _LoginState();
 }
+
 class _LoginState extends State<Login> {
   @override
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
       backgroundColor: Color(0xFF0C2A34),
       appBar:
@@ -41,12 +43,14 @@ class _LoginState extends State<Login> {
 
           ],
         ),
+
         actions: [
           Icon(Icons.water_drop, color: Color(0xFF4ECDC4), size: 28),
 
           const  SizedBox(width: 10),
         ],
       ),
+
 body: SingleChildScrollView(
   child: SizedBox(
     width: double.infinity,
