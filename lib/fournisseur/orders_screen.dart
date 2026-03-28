@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
 
 class OrdersScreen extends StatefulWidget {
@@ -25,6 +26,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   // ── Load ALL commandes for fournisseur ────────────────────
   Future<void> _loadOrders() async {
+    final rawRes = await http.get(
+      Uri.parse('https://pfe-backend-nwmy.onrender.com/api/commandes'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${ApiService.token}',
+      },
+    );
+    print('RAW STATUS: ${rawRes.statusCode}');
+    print('RAW BODY: ${rawRes.body}');
     // ✅ Block if called less than 10 seconds after last fetch
     if (_lastFetch != null &&
         DateTime.now().difference(_lastFetch!) < const Duration(seconds: 10)) {
@@ -77,6 +87,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       setState(() {
         _error   = 'Impossible de contacter le serveur.';
         _loading = false;
+
       });
     }
   }
@@ -142,6 +153,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
+
 
   // ── Refuse order ──────────────────────────────────────────
   Future<void> _refuseOrder(String orderId) async {

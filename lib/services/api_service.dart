@@ -247,7 +247,9 @@ class ApiService {
   /// Add a new chauffeur (fournisseur only)
   static Future<Map<String, dynamic>> addChauffeur({
     required String nom,
+    required String prenom,
     required String telephone,
+    required String adresse,
     required double capaciteCamion,
   }) async {
     try {
@@ -256,7 +258,9 @@ class ApiService {
         headers: _authHeaders,
         body: jsonEncode({
           'nom': nom,
+          'prenom': prenom,
           'telephone': telephone,
+          'adresse': adresse,
           'capaciteCamion': capaciteCamion,
         }),
       );

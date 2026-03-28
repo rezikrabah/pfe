@@ -10,6 +10,8 @@
 import 'package:flutter/material.dart';
 import 'package:test2/pages/main.dart';
 
+import 'ChauffeurScreen.dart';
+
 // ================================================================
 // 1. ÉCRAN PRINCIPAL DU PROFIL
 // ================================================================
@@ -258,6 +260,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               );
             },
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const ChauffeurScreen())),
+            icon: const Icon(Icons.local_shipping),
+            label: const Text('Mes Chauffeurs'),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1E3A8A),
+                foregroundColor: Colors.white),
           ),
         ],
       ),
