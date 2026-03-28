@@ -8,6 +8,7 @@
 // ================================================================
 
 import 'package:flutter/material.dart';
+import 'package:test2/pages/Loginpage.dart';
 import 'package:test2/pages/main.dart';
 
 import 'ChauffeurScreen.dart';
@@ -49,8 +50,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           TextButton(
             onPressed: () {
-              Navigator.pop(context);
-              // TODO: await AuthService.logout();
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => Loginpage(),
+                ),
+              );
             },
             child: const Text('Se déconnecter', style: TextStyle(color: Colors.red)),
           ),

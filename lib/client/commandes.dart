@@ -117,6 +117,7 @@ class _CommandesState extends State<commandes> {
           prix: demand.toDouble() * 2,
             lat:      _selectedLat,
             lon:      _selectedLon,
+            fournisseurId: selectedFournisseur!.id,
           );
       print('ADD COMMANDE RESULT: $result');
 

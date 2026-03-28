@@ -301,6 +301,7 @@ class ApiService {
     required double prix,
     double? lat,
     double? lon,
+    String? fournisseurId, // ✅ add this
   }) async {
     try {
       final response = await http.post(
@@ -309,20 +310,14 @@ class ApiService {
         body: jsonEncode({
           'capacite': capacite,
           'prix': prix,
-          if (lat != null) 'lat': lat,
-          if (lon != null) 'lon': lon,
+          if (fournisseurId != null) 'fournisseurId': fournisseurId, // ✅
         }),
       );
       return _decode(response);
-    } on SocketException {
-      return {'error': 'Connection error. Check your internet.'};
-    } on TimeoutException {
-      return {'error': 'Request timed out. Try again.'};
     } catch (e) {
       return {'error': e.toString()};
     }
   }
-
   /// Get my commandes (client only)
   static Future<List<dynamic>> getMyCommandes() async {
     try {
