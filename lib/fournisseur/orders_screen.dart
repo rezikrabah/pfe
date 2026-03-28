@@ -14,6 +14,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _loading = false;
   String? _error;
 
+  // ✅ Cooldown — prevent rapid repeated calls (fixes 429)
+  DateTime? _lastFetch;
+
   @override
   void initState() {
     super.initState();
@@ -22,11 +25,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   // ── Load ALL commandes for fournisseur ────────────────────
   Future<void> _loadOrders() async {
+    // ✅ Block if called less than 10 seconds after last fetch
+    if (_lastFetch != null &&
+        DateTime.now().difference(_lastFetch!) < const Duration(seconds: 10)) {
+      return;
+    }
+    _lastFetch = DateTime.now();
+
     setState(() { _loading = true; _error = null; });
     try {
-
-      final data = await ApiService.getAllCommandes();
-      print('ORDERS: $data');
+      // ✅ Single clean call — no duplicate raw debug http call
+      final data = await ApiService.getCommandes();
 
       if (data.isEmpty) {
         setState(() { orders = []; _loading = false; });
@@ -35,13 +44,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
       setState(() {
         orders = data.map<Map<String, dynamic>>((e) {
-          final id       = (e['_id'] ?? e['id'] ?? '').toString();
-          final capacite = (e['capacite'] as num?)?.toDouble() ?? 0.0;
-          final prix     = (e['prix'] as num?)?.toDouble() ?? 0.0;
-          final rawStatus = e['status'] ?? e['statut'] ?? 'en attente';
-          final status   = _mapStatut(rawStatus.toString());
+          final id        = (e['_id'] ?? e['id'] ?? '').toString();
+          final capacite  = (e['capacite'] as num?)?.toDouble() ?? 0.0;
+          final prix      = (e['prix'] as num?)?.toDouble() ?? 0.0;
+          final rawStatus = (e['status'] ?? e['statut'] ?? 'en attente').toString();
+          final status    = _mapStatut(rawStatus);
 
-          // ✅ client is populated from backend (.populate('client', '-password'))
           final client = e['client'];
           String clientName = 'Client';
           if (client is Map) {
@@ -56,8 +64,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
             'clientName': clientName,
             'address':    e['adresse'] ?? e['address'] ?? 'Adresse non renseignée',
             'quantity':   capacite,
-            'distance':   0.0,
             'price':      prix > 0 ? prix : capacite * 2,
+            'distance':   (e['distanceKm'] as num?)?.toDouble() ?? 0.0,
+            'duration':   (e['durationMin'] as num?)?.toInt()   ?? 0,
             'status':     status,
             'rawStatus':  rawStatus,
           };
@@ -77,7 +86,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       case 'en livraison': return 'accepted';
       case 'livrée':       return 'delivered';
       case 'annulée':      return 'refused';
-      default:             return 'pending'; // 'en attente'
+      default:             return 'pending';
     }
   }
 
@@ -93,7 +102,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
         return;
       }
 
-      // ✅ FIXED: pick first AVAILABLE chauffeur (disponible == true)
       final available = chauffeurs.where((c) {
         final dispo = c['disponible'];
         return dispo == true || dispo == 1;
@@ -108,7 +116,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       final chauffeurId = (available.first['_id'] ?? available.first['id']).toString();
 
       final result = await ApiService.assignCommande(
-        commandeId: orderId,
+        commandeId:  orderId,
         chauffeurId: chauffeurId,
       );
 
@@ -164,7 +172,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _runOptimization() async {
     setState(() => _loading = true);
     try {
-      final chauffeurs    = await ApiService.getMyChauffeurs();
+      final chauffeurs     = await ApiService.getMyChauffeurs();
       final acceptedOrders = orders.where((o) => o['status'] == 'accepted').toList();
 
       final result = await ApiService.optimiseRoute({
@@ -201,10 +209,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   // ── Filter ────────────────────────────────────────────────
   List<Map<String, dynamic>> get filteredOrders {
-    if (selectedFilter == 'Toutes')      return orders;
-    if (selectedFilter == 'En attente')  return orders.where((o) => o['status'] == 'pending').toList();
-    if (selectedFilter == 'Acceptées')   return orders.where((o) => o['status'] == 'accepted').toList();
-    if (selectedFilter == 'Livrées')     return orders.where((o) => o['status'] == 'delivered').toList();
+    if (selectedFilter == 'Toutes')     return orders;
+    if (selectedFilter == 'En attente') return orders.where((o) => o['status'] == 'pending').toList();
+    if (selectedFilter == 'Acceptées')  return orders.where((o) => o['status'] == 'accepted').toList();
+    if (selectedFilter == 'Livrées')    return orders.where((o) => o['status'] == 'delivered').toList();
     return orders;
   }
 
@@ -221,7 +229,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadOrders,
+            onPressed: _loading ? null : _loadOrders,
             tooltip: 'Rafraîchir',
           ),
           IconButton(
@@ -263,11 +271,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
               scrollDirection: Axis.horizontal,
               child: Row(children: [
                 _buildFilterChip('Toutes'),
-                const SizedBox(width: 8),
+                const SizedBox(width: 5),
                 _buildFilterChip('En attente'),
-                const SizedBox(width: 8),
+                const SizedBox(width: 5),
                 _buildFilterChip('Acceptées'),
-                const SizedBox(width: 8),
+                const SizedBox(width: 5),
                 _buildFilterChip('Livrées'),
               ]),
             ),
@@ -349,13 +357,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final isDelivered = order['status'] == 'delivered';
     final isRefused   = order['status'] == 'refused';
 
-    Color statusColor = Colors.orange;
-    String statusLabel = 'En attente';
-    IconData statusIcon = Icons.hourglass_empty;
+    Color    statusColor = Colors.orange;
+    String   statusLabel = 'En attente';
+    IconData statusIcon  = Icons.hourglass_empty;
 
-    if (isAccepted)  { statusColor = Colors.green;  statusLabel = 'Acceptée';  statusIcon = Icons.check_circle; }
-    if (isDelivered) { statusColor = Colors.blue;   statusLabel = 'Livrée';    statusIcon = Icons.done_all; }
-    if (isRefused)   { statusColor = Colors.red;    statusLabel = 'Annulée';   statusIcon = Icons.cancel; }
+    if (isAccepted)  { statusColor = Colors.green; statusLabel = 'Acceptée';  statusIcon = Icons.check_circle; }
+    if (isDelivered) { statusColor = Colors.blue;  statusLabel = 'Livrée';    statusIcon = Icons.done_all; }
+    if (isRefused)   { statusColor = Colors.red;   statusLabel = 'Annulée';   statusIcon = Icons.cancel; }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -375,7 +383,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               const Icon(Icons.person, color: Color(0xFF1E3A8A), size: 20),
               const SizedBox(width: 8),
               Text(order['clientName'],
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
             ]),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -391,7 +399,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               ]),
             ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10,),
 
           // Address
           Row(children: [
@@ -403,11 +411,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
           const SizedBox(height: 8),
 
           // Info chips
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            _buildInfoChip(Icons.water_drop, '${order['quantity']} L', Colors.blue),
-            _buildInfoChip(Icons.route,      '${order['distance']} km', Colors.orange),
-            _buildInfoChip(Icons.payments,   '${order['price']} DA', Colors.green),
-          ]),
+
+          Container(
+            padding: const EdgeInsets.all(1),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row( children: [
+              _buildInfoChip(Icons.water_drop, '${order['quantity']} L',   Colors.blue, ),
+              _buildInfoChip(Icons.route,      '${order['distance']} km',  Colors.orange),
+              _buildInfoChip(Icons.timer,      '${order['duration']} min', Colors.purple),
+              _buildInfoChip(Icons.payments,   '${order['price']} DA',     Colors.green),
+              ],
+            ),
+            ),
+          ),
 
           // Action buttons (only for pending)
           if (isPending) ...[

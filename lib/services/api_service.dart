@@ -87,8 +87,7 @@ class ApiService {
     }
   }
 
-  /// Login — saves token automatically
-  /// Returns { message, token, user: { id, nom, email } }
+  /// Login — saves token, userId, userRole automatically
   static Future<Map<String, dynamic>> login({
     required String email,
     required String password,
@@ -100,8 +99,9 @@ class ApiService {
         body: jsonEncode({'email': email, 'password': password}),
       );
       final data = _decode(response);
-      if (data['token'] != null) token = data['token'];
-      if (data['user']?['id'] != null) userId = data['user']['id'];
+      if (data['token'] != null)        token    = data['token'];
+      if (data['user']?['id'] != null)  userId   = data['user']['id'];
+      if (data['user']?['role'] != null) userRole = data['user']['role'];
       return data;
     } on SocketException {
       return {'error': 'Connection error. Check your internet.'};
@@ -114,6 +114,7 @@ class ApiService {
 
   /// Choose role after register — can only be called ONCE per user
   /// role must be: "client" or "fournisseur"
+  /// ✅ FIXED: now saves the NEW token returned by backend (token contains role)
   static Future<Map<String, dynamic>> chooseRole({
     required String userId,
     required String role,
@@ -125,7 +126,8 @@ class ApiService {
         body: jsonEncode({'userId': userId, 'role': role}),
       );
       final data = _decode(response);
-      if (data['role'] != null) userRole = data['role'];
+      if (data['role'] != null)  userRole      = data['role'];
+      if (data['token'] != null) token         = data['token']; // ✅ save new token with role
       return data;
     } on SocketException {
       return {'error': 'Connection error. Check your internet.'};
@@ -156,7 +158,22 @@ class ApiService {
       return [];
     }
   }
-
+  /// Get fournisseur's own profile including fournisseurInfo.quantiteEau
+  static Future<Map<String, dynamic>> getMyInfo() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/fournisseurs/me'),
+        headers: _authHeaders,
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
   // ─────────────────────────────────────────
   // FOURNISSEUR  →  /api/fournisseurs
   // ─────────────────────────────────────────
@@ -174,6 +191,44 @@ class ApiService {
           'quantiteEau': quantiteEau,
           'wilayas': wilayas,
         }),
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Update fournisseur GPS position (fournisseur only)
+  static Future<Map<String, dynamic>> updatePosition({
+    required double lat,
+    required double lon,
+  }) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/fournisseurs/position'),
+        headers: _authHeaders,
+        body: jsonEncode({'lat': lat, 'lon': lon}),
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Set fournisseur offline (fournisseur only)
+  static Future<Map<String, dynamic>> setOffline() async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/fournisseurs/offline'),
+        headers: _authHeaders,
       );
       return _decode(response);
     } on SocketException {
@@ -240,12 +295,19 @@ class ApiService {
   static Future<Map<String, dynamic>> addCommande({
     required double capacite,
     required double prix,
+    double? lat,
+    double? lon,
   }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/commandes/add'),
         headers: _authHeaders,
-        body: jsonEncode({'capacite': capacite, 'prix': prix}),
+        body: jsonEncode({
+          'capacite': capacite,
+          'prix': prix,
+          if (lat != null) 'lat': lat,
+          if (lon != null) 'lon': lon,
+        }),
       );
       return _decode(response);
     } on SocketException {
@@ -274,7 +336,7 @@ class ApiService {
     }
   }
 
-  /// Get pending commandes (fournisseur only)
+  /// Get pending commandes only — "en attente" (fournisseur only)
   static Future<List<dynamic>> getPendingCommandes() async {
     try {
       final response = await http.get(
@@ -291,14 +353,18 @@ class ApiService {
     }
   }
 
-  /// Get all commandes with optional status filter (fournisseur only)
+  /// ✅ Get ALL commandes with optional status filter (fournisseur only)
+  /// This is what OrdersScreen should use — shows all statuses
   /// status: "en attente" | "en livraison" | "livrée" | "annulée"
-  static Future<List<dynamic>> getAllCommandes({String? status}) async {
+  static Future<List<dynamic>> getCommandes({String? status}) async {
     try {
       final uri = status != null
-          ? Uri.parse('$baseUrl/api/commandes?status=$status')
+          ? Uri.parse('$baseUrl/api/commandes?status=${Uri.encodeComponent(status)}')
           : Uri.parse('$baseUrl/api/commandes');
       final response = await http.get(uri, headers: _authHeaders);
+      print('GET /commandes status: ${response.statusCode}');
+      print('GET /commandes body: ${response.body}');
+      print('GET /commandes token: $token');
       return _decodeList(response);
     } on SocketException {
       return [];

@@ -33,7 +33,7 @@ class _FournisseurOrdersPageState extends State<FournisseurOrdersPage> {
   // ✅ Use ApiService.getAllCommandes() instead of raw http
   Future<void> _fetchOrders() async {
     try {
-      final data = await ApiService.getAllCommandes();
+      final data = await ApiService.getCommandes();
 
       setState(() {
         _orders = data.map<Map<String, dynamic>>((e) {

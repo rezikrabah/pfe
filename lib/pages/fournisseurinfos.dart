@@ -56,7 +56,8 @@ class _fournisseurinfosState extends State<fournisseurinfos> {
 
     try {
       final result = await ApiService.addFournisseurInfo(
-        quantiteEau: _parseVolume(selectedVolume!),
+        quantiteEau: double.tryParse(
+            selectedVolume!.replaceAll(' L', '').replaceAll(' ', '').trim()) ?? 0,
         wilayas: selectedwilayas,
       );
 
@@ -209,62 +210,83 @@ class _fournisseurinfosState extends State<fournisseurinfos> {
 
   // ── Volume Picker ─────────────────────────────────────────
   void _showVolumePicker() {
+    final ctrl = TextEditingController(
+      text: selectedVolume?.replaceAll(' L', '') ?? '',
+    );
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.55,
-        decoration: const BoxDecoration(
-          color: Color(0xFFF0F4FF),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(children: [
-          const SizedBox(height: 12),
-          _handle(),
-          const SizedBox(height: 12),
-          const Text("Volume d'eau",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
-                  color: Color(0xFF1A237E))),
-          const SizedBox(height: 12),
-          Expanded(
-            child: ListView.builder(
-              itemCount: volumes.length,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemBuilder: (context, index) {
-                final vol = volumes[index];
-                final isSelected = vol == selectedVolume;
-                return GestureDetector(
-                  onTap: () {
-                    setState(() => selectedVolume = vol);
-                    Navigator.pop(context);
-                  },
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 5),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                    decoration: BoxDecoration(
-                      color: isSelected ? const Color(0xFF2979FF) : Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                          color: isSelected ? const Color(0xFF2979FF) : Colors.black12),
-                    ),
-                    child: Row(children: [
-                      Icon(Icons.water_drop,
-                          color: isSelected ? Colors.white : const Color(0xFF2979FF)),
-                      const SizedBox(width: 14),
-                      Text(vol, style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w600,
-                        color: isSelected ? Colors.white : const Color(0xFF1A237E),
-                      )),
-                      const Spacer(),
-                      if (isSelected) const Icon(Icons.check_circle, color: Colors.white),
-                    ]),
-                  ),
-                );
-              },
-            ),
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: const BoxDecoration(
+            color: Color(0xFFF0F4FF),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
-        ]),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            _handle(),
+            const SizedBox(height: 16),
+            const Text("Volume d'eau disponible",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A237E))),
+            const SizedBox(height: 8),
+            const Text("Entrez la quantité exacte en litres",
+                style: TextStyle(color: Colors.black54, fontSize: 13)),
+            const SizedBox(height: 20),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(
+                  color: Color(0xFF1A237E),
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+              decoration: InputDecoration(
+                hintText: 'Ex: 2000',
+                hintStyle: const TextStyle(color: Colors.black26),
+                suffixText: 'L',
+                suffixStyle: const TextStyle(
+                    color: Color(0xFF2979FF),
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  final val = int.tryParse(ctrl.text.trim());
+                  if (val != null && val > 0) {
+                    setState(() => selectedVolume = '${val} L');
+                    Navigator.pop(context);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2979FF),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text('Confirmer',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ]),
+        ),
       ),
     );
   }

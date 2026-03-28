@@ -53,18 +53,15 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   // ── Load real capacity from backend ──────────────────────
   Future<void> _loadCapacity() async {
     setState(() => _loadingCapacity = true);
-
-    // ✅ Use ApiService to get chauffeurs and sum their capacity
-    final chauffeurs = await ApiService.getMyChauffeurs();
-
-    if (chauffeurs.isNotEmpty) {
-      double total = chauffeurs.fold(0.0, (sum, c) =>
-      sum + ((c['capaciteCamion'] as num?)?.toDouble() ?? 0.0));
+    try {
+      // ✅ Load quantiteEau from fournisseurInfo, not chauffeur truck sizes
+      final info = await ApiService.getMyInfo();
+      final quantite = (info['fournisseurInfo']?['quantiteEau'] as num?)?.toDouble() ?? 0.0;
       setState(() {
-        _capacityLiters  = total;
+        _capacityLiters  = quantite;
         _loadingCapacity = false;
       });
-    } else {
+    } catch (e) {
       setState(() {
         _capacityLiters  = 0;
         _loadingCapacity = false;
@@ -125,20 +122,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
   // ✅ Upload GPS position to backend via ApiService base URL
   Future<void> _uploadGps() async {
-    try {
-      await http.post(
-        Uri.parse('${ApiService.baseUrl}/api/gps/update'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${ApiService.token}',
-        },
-        body: jsonEncode({
-          'conducteur_id': ApiService.userId,
-          'lat': _currentPosition.latitude,
-          'lon': _currentPosition.longitude,
-        }),
-      );
-    } catch (_) {}
+    await ApiService.updatePosition(
+      lat: _currentPosition.latitude,
+      lon: _currentPosition.longitude,
+    );
   }
 
   void _toggleOnlineStatus() async {
@@ -146,35 +133,15 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     setState(() => isOnline = newStatus);
 
     if (newStatus) {
-      // ✅ GO pressed — save position to DB
-      try {
-        final res = await http.put(
-          Uri.parse('${ApiService.baseUrl}/api/fournisseurs/position'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ${ApiService.token}',
-          },
-          body: jsonEncode({
-            'lat': _currentPosition.latitude,
-            'lon': _currentPosition.longitude,
-          }),
-        );
-        print('Position saved: ${res.statusCode}');
-      } catch (e) {
-        debugPrint('Position save error: $e');
-      }
+      // ✅ Use ApiService instead of raw http
+      await ApiService.updatePosition(
+        lat: _currentPosition.latitude,
+        lon: _currentPosition.longitude,
+      );
       _showSuccess('Vous êtes maintenant EN LIGNE — position enregistrée ✓');
     } else {
-      // ✅ STOP pressed — set offline in DB
-      try {
-        await http.put(
-          Uri.parse('${ApiService.baseUrl}/api/fournisseurs/offline'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ${ApiService.token}',
-          },
-        );
-      } catch (_) {}
+      // ✅ Use ApiService instead of raw http
+      await ApiService.setOffline();
       _showSuccess('Vous êtes maintenant HORS LIGNE');
     }
   }

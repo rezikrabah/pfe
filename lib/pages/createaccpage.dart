@@ -58,7 +58,7 @@ class _createaccpageState extends State<createaccpage> {
       telephone: _phoneController.text.trim(),
       adresse: _adresseController.text.trim(),
     );
-
+    print('REGISTER RESULT: $result');
     setState(() => _isLoading = false);
 
     if (result['error'] != null) {

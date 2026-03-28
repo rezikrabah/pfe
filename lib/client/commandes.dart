@@ -41,7 +41,7 @@ class _CommandesState extends State<commandes> {
   String?            _fournError;
 
   final List<String> volumes = [
-    '100 L', '500 L', '1000 L', '2 000 L', '3 000 L', '5 000 L',
+    '100L', '500L', '1000L', '2 000L', '3 000 L', '5 000 L',
   ];
 
   @override
@@ -115,7 +115,10 @@ class _CommandesState extends State<commandes> {
           final result = await ApiService.addCommande(
       capacite: demand.toDouble(),
           prix: demand.toDouble() * 2,
-      );
+            lat:      _selectedLat,
+            lon:      _selectedLon,
+          );
+      print('ADD COMMANDE RESULT: $result');
 
       if (result['error'] != null) {
         _showError(result['error']);

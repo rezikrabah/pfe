@@ -86,8 +86,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ Récupération du thème courant
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      // ✅ Fond général : Theme.of(context).scaffoldBackgroundColor
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Historique'),
         backgroundColor: const Color(0xFF1E3A8A),
@@ -122,12 +127,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
             const SizedBox(height: 16),
 
             // Filtres de période
-            _buildPeriodFilters(),
+            _buildPeriodFilters(isDark),
 
             const SizedBox(height: 24),
 
             // Liste des livraisons
-            _buildDeliveriesList(),
+            _buildDeliveriesList(theme, isDark),
           ],
         ),
       ),
@@ -287,19 +292,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildPeriodFilters() {
+  Widget _buildPeriodFilters(bool isDark) {
     return Row(
       children: [
-        _buildPeriodChip('Jour'),
+        _buildPeriodChip('Jour', isDark),
         const SizedBox(width: 8),
-        _buildPeriodChip('Semaine'),
+        _buildPeriodChip('Semaine', isDark),
         const SizedBox(width: 8),
-        _buildPeriodChip('Mois'),
+        _buildPeriodChip('Mois', isDark),
       ],
     );
   }
 
-  Widget _buildPeriodChip(String period) {
+  Widget _buildPeriodChip(String period, bool isDark) {
     final isSelected = selectedPeriod == period;
     return Expanded(
       child: GestureDetector(
@@ -311,18 +316,34 @@ class _HistoryScreenState extends State<HistoryScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF1E3A8A) : Colors.white,
+            // ✅ Barre filtres : Theme.of(context).cardColor
+            // ✅ Chips non sélectionnés en sombre : Colors.white12
+            color: isSelected
+                ? const Color(0xFF1E3A8A)
+                : isDark
+                ? Colors.white12
+                : Colors.white,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: isSelected ? const Color(0xFF1E3A8A) : Colors.grey[300]!,
+              color: isSelected
+                  ? const Color(0xFF1E3A8A)
+                  : isDark
+                  ? Colors.white24
+                  : Colors.grey[300]!,
             ),
           ),
           child: Text(
             period,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: isSelected ? Colors.white : Colors.grey[700],
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              // ✅ Textes : Theme.of(context).colorScheme.onSurface
+              color: isSelected
+                  ? Colors.white
+                  : isDark
+                  ? Colors.white70
+                  : Colors.grey[700],
+              fontWeight:
+              isSelected ? FontWeight.bold : FontWeight.normal,
             ),
           ),
         ),
@@ -330,7 +351,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildDeliveriesList() {
+  Widget _buildDeliveriesList(ThemeData theme, bool isDark) {
     String? currentDate;
 
     return Column(
@@ -350,28 +371,31 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.grey[700],
+                    // ✅ Textes : Theme.of(context).colorScheme.onSurface
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
               ),
             ],
-            _buildDeliveryCard(delivery),
+            _buildDeliveryCard(delivery, theme, isDark),
           ],
         );
       }).toList(),
     );
   }
 
-  Widget _buildDeliveryCard(Map<String, dynamic> delivery) {
+  Widget _buildDeliveryCard(
+      Map<String, dynamic> delivery, ThemeData theme, bool isDark) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        // ✅ Cartes commandes : Theme.of(context).cardColor
+        color: theme.cardColor,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -383,7 +407,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.green[50],
+              // ✅ Badges statut en sombre : Colors.green.withOpacity(0.2)
+              color: isDark
+                  ? Colors.green.withOpacity(0.2)
+                  : Colors.green[50],
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -402,27 +429,35 @@ class _HistoryScreenState extends State<HistoryScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                    Icon(Icons.access_time,
+                        size: 16,
+                        // ✅ Textes secondaires : onSurface avec opacité
+                        color: theme.colorScheme.onSurface.withOpacity(0.6)),
                     const SizedBox(width: 4),
                     Text(
                       delivery['time'],
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
-                        color: Colors.grey[700],
+                        // ✅ Textes : Theme.of(context).colorScheme.onSurface
+                        color: theme.colorScheme.onSurface,
                       ),
                     ),
                     const Spacer(),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: Colors.green[50],
+                        // ✅ Badges statut en sombre : Colors.green.withOpacity(0.2)
+                        color: isDark
+                            ? Colors.green.withOpacity(0.2)
+                            : Colors.green[50],
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
                         'Terminée',
                         style: TextStyle(
-                          color: Colors.green[700],
+                          color: Colors.green[isDark ? 300 : 700],
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
@@ -433,14 +468,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
+                    Icon(Icons.location_on,
+                        size: 16,
+                        color: theme.colorScheme.onSurface.withOpacity(0.6)),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
                         '${delivery['from']} → ${delivery['to']}',
                         style: TextStyle(
                           fontSize: 14,
-                          color: Colors.grey[600],
+                          // ✅ Textes : Theme.of(context).colorScheme.onSurface
+                          color: theme.colorScheme.onSurface.withOpacity(0.7),
                         ),
                       ),
                     ),
@@ -449,17 +487,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Icon(Icons.water_drop, size: 16, color: Colors.blue[600]),
+                    Icon(Icons.water_drop,
+                        size: 16, color: Colors.blue[isDark ? 300 : 600]),
                     const SizedBox(width: 4),
                     Text(
                       '${delivery['quantity']} L',
                       style: TextStyle(
                         fontSize: 14,
-                        color: Colors.grey[700],
+                        color: theme.colorScheme.onSurface.withOpacity(0.8),
                       ),
                     ),
                     const SizedBox(width: 16),
-                    Icon(Icons.payments, size: 16, color: Colors.green[600]),
+                    Icon(Icons.payments,
+                        size: 16, color: Colors.green[isDark ? 300 : 600]),
                     const SizedBox(width: 4),
                     Text(
                       '${delivery['price']} DA',
