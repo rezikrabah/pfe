@@ -11,7 +11,8 @@ import 'clientpage.dart';
 import 'commandes.dart';
 import 'historique.dart';
 import 'profile.dart';
-import '../services/api_service.dart'; // ✅ Import ApiService
+import '../services/api_service.dart';
+import '../services/osrmservice.dart'; // ✅ OSRM import
 
 const List<Color> _routeColors = [
   Color(0xFF2196F3),
@@ -32,8 +33,8 @@ class suivi extends StatefulWidget {
 class _suiviState extends State<suivi> {
   final MapController mapController = MapController();
 
-  List<Polyline> _polylines = [];
-  List<Marker>   _markers   = [];
+  List<Polyline> _polylines     = [];
+  List<Marker>   _markers       = [];
   bool           _loadingRoutes = false;
   String?        _routeError;
   double?        _totalDistance;
@@ -56,139 +57,112 @@ class _suiviState extends State<suivi> {
     super.dispose();
   }
 
-  // ── Load solution via ApiService ───────────────────────────
+  // ── Load solution using OSRM ──────────────────────────────
   Future<void> _loadSolution() async {
     setState(() { _loadingRoutes = true; _routeError = null; });
 
     try {
-      // ✅ Use ApiService.optimiseRoute instead of raw http call
-      final result = await ApiService.optimiseRoute({
-        'fournisseurId': ApiService.userId,
-      });
+      // ✅ Get client's commandes that are en livraison
+      final commandes = await ApiService.getMyCommandes();
+      final accepted  = commandes.where((c) =>
+      (c['status'] ?? '').toString() == 'en livraison').toList();
 
-      if (result['error'] != null) {
+      if (accepted.isEmpty) {
         setState(() {
-          _routeError    = result['error'];
+          _routeError    = 'Aucune commande en livraison pour le moment.';
           _loadingRoutes = false;
         });
-      } else if (result['routes'] == null) {
-        setState(() {
-          _routeError    = 'Aucune solution calculée. Lancez l\'optimisation.';
-          _loadingRoutes = false;
-        });
-      } else {
-        _buildMapObjects(result);
-        final routes = result['routes'] as List<dynamic>;
-        double total = routes.fold(0.0, (sum, r) =>
-        sum + ((r['distance_km'] as num?)?.toDouble() ?? 0.0));
-        setState(() {
-          _totalDistance = total;
-          _loadingRoutes = false;
-        });
+        return;
       }
-    } catch (e) {
-      setState(() {
-        _routeError    = 'Impossible de joindre le serveur.';
-        _loadingRoutes = false;
-      });
-    }
-  }
 
-  // ── Build map from solution response ──────────────────────
-  void _buildMapObjects(Map<String, dynamic> solution) async {
-    final newPolylines = <Polyline>[];
-    final newMarkers   = <Marker>[];
+      final newPolylines = <Polyline>[];
+      final newMarkers   = <Marker>[];
+      double totalDist   = 0.0;
 
-    try {
-      // ✅ Use ApiService base URL for conductor and commande positions
-      final condRes = await http.get(
-        Uri.parse('${ApiService.baseUrl}/api/chauffeurs/my'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${ApiService.token}',
-        },
-      );
+      for (int i = 0; i < accepted.length; i++) {
+        final cmd   = accepted[i];
+        final color = _routeColors[i % _routeColors.length];
 
-      final cmdRes = await http.get(
-        Uri.parse('${ApiService.baseUrl}/api/commandes?status=en livraison'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${ApiService.token}',
-        },
-      );
+        // ✅ Client destination position
+        final clientLat = (cmd['position']?['lat'] as num?)?.toDouble();
+        final clientLon = (cmd['position']?['lon'] as num?)?.toDouble();
+        if (clientLat == null || clientLon == null) continue;
+        final clientPos = LatLng(clientLat, clientLon);
 
-      if (condRes.statusCode != 200 || cmdRes.statusCode != 200) return;
+        // ✅ Fournisseur position from populated fournisseur field
+        final fourn    = cmd['fournisseur'];
+        double? fournLat, fournLon;
+        if (fourn is Map) {
+          fournLat = (fourn['position']?['lat'] as num?)?.toDouble();
+          fournLon = (fourn['position']?['lon'] as num?)?.toDouble();
+        }
 
-      final conducteurs = (jsonDecode(condRes.body) as List)
-          .fold<Map<int, dynamic>>({}, (m, c) { m[c['id']] = c; return m; });
-      final commandes = (jsonDecode(cmdRes.body) as List)
-          .fold<Map<int, dynamic>>({}, (m, c) { m[c['id']] = c; return m; });
+        List<LatLng> routePoints;
+        if (fournLat != null && fournLon != null) {
+          final fournPos = LatLng(fournLat, fournLon);
 
-      final routes = solution['routes'] as List<dynamic>;
+          // ✅ OSRM real road route
+          routePoints = await OsrmService.getRoute(fournPos, clientPos);
+          final dist  = await OsrmService.getDistanceAndDuration(fournPos, clientPos);
+          totalDist  += dist['distance'] ?? 0.0;
 
-      for (int i = 0; i < routes.length; i++) {
-        final r        = routes[i];
-        final color    = _routeColors[i % _routeColors.length];
-        final condId   = r['conducteur_id'] as int;
-        final condData = conducteurs[condId];
-        if (condData == null) continue;
+          // Fournisseur truck marker
+          newMarkers.add(Marker(
+            point: fournPos, width: 44, height: 44,
+            child: Tooltip(
+              message: 'Votre livreur',
+              child: Icon(Icons.local_shipping, color: color, size: 36),
+            ),
+          ));
+        } else {
+          // No fournisseur position yet — just show client marker
+          routePoints = [clientPos];
+        }
 
-        final driverPos = LatLng(
-          (condData['lat'] as num).toDouble(),
-          (condData['lon'] as num).toDouble(),
-        );
-
-        // Driver marker
+        // Client home marker
         newMarkers.add(Marker(
-          point: driverPos, width: 44, height: 44,
+          point: clientPos, width: 44, height: 55,
           child: Tooltip(
-            message: '${r['conducteur_nom']}\n${r['charge']}/${r['capacite']} L',
-            child: Icon(Icons.local_shipping, color: color, size: 36),
+            message: 'Votre adresse',
+            child: Column(children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                    color: color, borderRadius: BorderRadius.circular(8)),
+                child: Text('${i + 1}',
+                    style: const TextStyle(color: Colors.white,
+                        fontSize: 10, fontWeight: FontWeight.bold)),
+              ),
+              Icon(Icons.home, color: color, size: 30),
+            ]),
           ),
         ));
 
-        // Route polyline + stop markers
-        final stopIds = r['route'] as List<dynamic>;
-        if (stopIds.isNotEmpty) {
-          final points = <LatLng>[driverPos];
-          for (int j = 0; j < stopIds.length; j++) {
-            final cmd = commandes[stopIds[j]];
-            if (cmd == null) continue;
-            final stopPos = LatLng(
-              (cmd['lat'] as num).toDouble(),
-              (cmd['lon'] as num).toDouble(),
-            );
-            points.add(stopPos);
-
-            newMarkers.add(Marker(
-              point: stopPos, width: 40, height: 55,
-              child: Tooltip(
-                message: 'C${cmd['id']}: ${cmd['description']}',
-                child: Column(children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                        color: color, borderRadius: BorderRadius.circular(8)),
-                    child: Text('${j + 1}',
-                        style: const TextStyle(color: Colors.white,
-                            fontSize: 10, fontWeight: FontWeight.bold)),
-                  ),
-                  Icon(Icons.location_pin, color: color, size: 30),
-                ]),
-              ),
-            ));
-          }
+        // ✅ OSRM real road polyline
+        if (routePoints.length > 1) {
           newPolylines.add(Polyline(
-              points: points, color: color, strokeWidth: 4.0, isDotted: true));
+            points:      routePoints,
+            color:       color,
+            strokeWidth: 4.0,
+          ));
         }
       }
 
       setState(() {
-        _polylines = newPolylines;
-        _markers   = newMarkers;
+        _polylines     = newPolylines;
+        _markers       = newMarkers;
+        _totalDistance = totalDist > 0 ? totalDist : null;
+        _loadingRoutes = false;
       });
+
+      if (newMarkers.isNotEmpty) {
+        mapController.move(newMarkers.last.point, 13);
+      }
     } catch (e) {
-      debugPrint('Map build error: $e');
+      setState(() {
+        _routeError    = 'Erreur: $e';
+        _loadingRoutes = false;
+      });
     }
   }
 
@@ -204,25 +178,8 @@ class _suiviState extends State<suivi> {
           accuracy: LocationAccuracy.high,
           distanceFilter: 10,
         ),
-      ).listen((pos) async {
+      ).listen((pos) {
         setState(() => _myPosition = LatLng(pos.latitude, pos.longitude));
-        try {
-          // ✅ Use ApiService.baseUrl and token for GPS update
-          await http.post(
-            Uri.parse('${ApiService.baseUrl}/api/gps/update'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${ApiService.token}',
-            },
-            body: jsonEncode({
-              // ✅ Use ApiService.userId instead of hardcoded 1
-              'conducteur_id': widget.fournisseurId ??
-                  int.tryParse(ApiService.userId ?? '1') ?? 1,
-              'lat': pos.latitude,
-              'lon': pos.longitude,
-            }),
-          );
-        } catch (_) {}
       });
     } catch (e) {
       debugPrint('GPS error: $e');
@@ -241,7 +198,6 @@ class _suiviState extends State<suivi> {
   }
 
   // ── BUILD ─────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -264,7 +220,8 @@ class _suiviState extends State<suivi> {
                 if (_myPosition != null)
                   Marker(
                     point: _myPosition!, width: 40, height: 40,
-                    child: const Icon(Icons.my_location, color: Colors.blue, size: 36),
+                    child: const Icon(Icons.my_location,
+                        color: Colors.blue, size: 36),
                   ),
                 ..._markers,
               ]),
@@ -277,16 +234,20 @@ class _suiviState extends State<suivi> {
               top: 60, left: 0, right: 0,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    color: Colors.white, borderRadius: BorderRadius.circular(20),
-                    boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8)],
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black12, blurRadius: 8)
+                    ],
                   ),
                   child: const Row(mainAxisSize: MainAxisSize.min, children: [
                     SizedBox(width: 16, height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2)),
                     SizedBox(width: 8),
-                    Text('Chargement des routes...', style: TextStyle(fontSize: 13)),
+                    Text('Calcul de la route...', style: TextStyle(fontSize: 13)),
                   ]),
                 ),
               ),
@@ -302,13 +263,16 @@ class _suiviState extends State<suivi> {
                     color: Colors.orange.shade100,
                     borderRadius: BorderRadius.circular(12)),
                 child: Row(children: [
-                  const Icon(Icons.info_outline, color: Colors.deepOrange, size: 18),
+                  const Icon(Icons.info_outline,
+                      color: Colors.deepOrange, size: 18),
                   const SizedBox(width: 8),
                   Expanded(child: Text(_routeError!,
-                      style: const TextStyle(color: Colors.deepOrange, fontSize: 13))),
+                      style: const TextStyle(
+                          color: Colors.deepOrange, fontSize: 13))),
                   TextButton(
                     onPressed: _loadSolution,
-                    child: const Text('Réessayer', style: TextStyle(fontSize: 12)),
+                    child: const Text('Réessayer',
+                        style: TextStyle(fontSize: 12)),
                   ),
                 ]),
               ),
@@ -319,14 +283,15 @@ class _suiviState extends State<suivi> {
             Positioned(
               top: 60, left: 16,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                     color: const Color(0xFF0B3C49),
                     borderRadius: BorderRadius.circular(12)),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.route, color: Colors.white, size: 16),
                   const SizedBox(width: 6),
-                  Text('${_totalDistance!.toStringAsFixed(1)} km total',
+                  Text('${_totalDistance!.toStringAsFixed(1)} km',
                       style: const TextStyle(color: Colors.white,
                           fontSize: 13, fontWeight: FontWeight.bold)),
                 ]),
@@ -339,7 +304,8 @@ class _suiviState extends State<suivi> {
             child: FloatingActionButton.small(
               heroTag: 'location', backgroundColor: Colors.white,
               onPressed: _goToMyLocation,
-              child: const Icon(Icons.my_location, color: Color(0xFF0B3C49)),
+              child: const Icon(Icons.my_location,
+                  color: Color(0xFF0B3C49)),
             ),
           ),
 
@@ -369,44 +335,55 @@ class _suiviState extends State<suivi> {
         child: Row(children: [
           Column(mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min, children: [
-                IconButton(icon: const Icon(CupertinoIcons.map,
-                    color: Colors.white, size: 20), onPressed: () {}),
-                const Text('suivi', style: TextStyle(fontSize: 10, color: Colors.white)),
+                IconButton(
+                    icon: const Icon(CupertinoIcons.map,
+                        color: Colors.white, size: 20),
+                    onPressed: () {}),
+                const Text('suivi',
+                    style: TextStyle(fontSize: 10, color: Colors.white)),
               ]),
           const SizedBox(width: 35),
           Column(mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
-                  icon: const Icon(CupertinoIcons.cube_box_fill, color: Colors.white, size: 20),
+                  icon: const Icon(CupertinoIcons.cube_box_fill,
+                      color: Colors.white, size: 20),
                   onPressed: () => Navigator.push(context,
                       MaterialPageRoute(builder: (_) => commandes(
-                        // ✅ Use ApiService.userId instead of hardcoded 1
-                        clientId: int.tryParse(ApiService.userId ?? '1') ?? 1,
+                        clientId: int.tryParse(
+                            ApiService.userId ?? '1') ?? 1,
                       ))),
                 ),
-                const Text('commandes', style: TextStyle(fontSize: 8,
-                    fontWeight: FontWeight.w600, color: Colors.white)),
+                const Text('commandes',
+                    style: TextStyle(fontSize: 8,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white)),
               ]),
           const SizedBox(width: 25),
           Column(mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
-                  padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-                  icon: const Icon(CupertinoIcons.clock, color: Colors.white, size: 20),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(CupertinoIcons.clock,
+                      color: Colors.white, size: 20),
                   onPressed: () => Navigator.push(context,
                       MaterialPageRoute(builder: (_) => historique())),
                 ),
-                const Text('historique', style: TextStyle(color: Colors.white, fontSize: 8)),
+                const Text('historique',
+                    style: TextStyle(color: Colors.white, fontSize: 8)),
               ]),
           const SizedBox(width: 22, height: 80),
           Column(mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
-                  icon: const Icon(CupertinoIcons.profile_circled, color: Colors.white, size: 20),
+                  icon: const Icon(CupertinoIcons.profile_circled,
+                      color: Colors.white, size: 20),
                   onPressed: () => Navigator.push(context,
                       MaterialPageRoute(builder: (_) => profile())),
                 ),
-                const Text('profile', style: TextStyle(color: Colors.white, fontSize: 10)),
+                const Text('profile',
+                    style: TextStyle(color: Colors.white, fontSize: 10)),
               ]),
         ]),
       ),

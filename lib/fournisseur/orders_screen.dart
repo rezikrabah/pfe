@@ -134,10 +134,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (result['error'] != null) {
         _showError(result['error']);
       } else {
+        // ✅ Update local state
         setState(() {
           final idx = orders.indexWhere((o) => o['id'] == orderId);
           if (idx != -1) orders[idx]['status'] = 'accepted';
         });
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Commande acceptée et chauffeur assigné ✓'),
@@ -145,7 +147,48 @@ class _OrdersScreenState extends State<OrdersScreen> {
             duration: Duration(seconds: 2),
           ));
         }
-        await _runOptimization();
+
+        // ✅ Send to Python for VRP optimization
+        final order = orders.firstWhere(
+              (o) => o['id'] == orderId,
+          orElse: () => {},
+        );
+
+        if (order.isNotEmpty) {
+          // 1 — Send chauffeurs to Python
+          final fournisseurInfo = await ApiService.getMyInfo();
+          final fLat = (fournisseurInfo['position']?['lat'] as num?)?.toDouble() ?? 0.0;
+          final fLon = (fournisseurInfo['position']?['lon'] as num?)?.toDouble() ?? 0.0;
+          await ApiService.setupConducteurs(
+            chauffeurs:     chauffeurs,
+            fournisseurLat: fLat,
+            fournisseurLon: fLon,
+          );
+
+          // 2 — Send commande to Python
+          await ApiService.sendCommandeToPython(
+            id:     orderId,
+            lat:    (order['position']?['lat'] as num?)?.toDouble() ?? order['lat'] ?? 0.0,
+            lon:    (order['position']?['lon'] as num?)?.toDouble() ?? order['lon'] ?? 0.0,
+            demand: (order['quantity'] as num?)?.toDouble() ?? 0.0,
+          );
+
+          // 3 — Accept in Python
+          await ApiService.acceptCommandePython(orderId);
+
+          // 4 — Run NSGA-II
+          final optimResult = await ApiService.optimize();
+
+          if (optimResult['error'] == null && mounted) {
+            final dist  = (optimResult['distance_totale_km'] as num?)?.toStringAsFixed(1) ?? '?';
+            final valid = optimResult['valide'] as bool? ?? false;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('✓ Routes optimisées — $dist km${valid ? "" : " (invalide)"}'),
+              backgroundColor: const Color(0xFF1E3A8A),
+              duration: const Duration(seconds: 4),
+            ));
+          }
+        }
       }
     } catch (e) {
       _showError('Erreur réseau: $e');
@@ -444,6 +487,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             Row(children: [
               Expanded(child: ElevatedButton.icon(
                 onPressed: _loading ? null : () => _acceptOrder(order['id']),
+
                 icon: const Icon(Icons.check, size: 20),
                 label: const Text('Accepter'),
                 style: ElevatedButton.styleFrom(

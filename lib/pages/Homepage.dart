@@ -40,7 +40,7 @@ class _HomepageState extends State<Homepage>  {
           CircleAvatar(
           radius: 35,
           backgroundImage:const CachedNetworkImageProvider(
-            'https://img.freepik.com/premium-vector/water-vector-logo-design-white-background_1277164-15228.jpg',
+            'https://static.vecteezy.com/system/resources/previews/019/952/881/original/oil-tanker-icon-design-free-vector.jpg',
           ),
         )
             ),

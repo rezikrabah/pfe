@@ -4,7 +4,15 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 
 class ApiService {
+  // ─────────────────────────────────────────
+  // BASE URLS
+  // ─────────────────────────────────────────
+
+  /// Node.js backend — auth, users, commandes, chauffeurs
   static const String baseUrl = 'https://pfe-backend-nwmy.onrender.com';
+
+  /// Python FastAPI — VRP NSGA-II optimization (local PC)
+  static const String pythonUrl = 'http://10.0.2.2:8000';
 
   // Stored after login
   static String? token;
@@ -24,6 +32,10 @@ class ApiService {
     'Authorization': 'Bearer $token',
   };
 
+  static const Map<String, String> _pythonHeaders = {
+    'Content-Type': 'application/json',
+  };
+
   // ─────────────────────────────────────────
   // HELPERS
   // ─────────────────────────────────────────
@@ -39,6 +51,7 @@ class ApiService {
   }
 
   static List<dynamic> _decodeList(http.Response response) {
+    if (response.statusCode == 429) return [];
     try {
       final decoded = jsonDecode(response.body);
       if (decoded is List) return decoded;
@@ -52,8 +65,6 @@ class ApiService {
   // AUTH  →  /api/auth
   // ─────────────────────────────────────────
 
-  /// Register a new user
-  /// Returns { msg, userId } — then call chooseRole() with the userId
   static Future<Map<String, dynamic>> register({
     required String nom,
     required String prenom,
@@ -87,7 +98,6 @@ class ApiService {
     }
   }
 
-  /// Login — saves token, userId, userRole automatically
   static Future<Map<String, dynamic>> login({
     required String email,
     required String password,
@@ -99,8 +109,8 @@ class ApiService {
         body: jsonEncode({'email': email, 'password': password}),
       );
       final data = _decode(response);
-      if (data['token'] != null)        token    = data['token'];
-      if (data['user']?['id'] != null)  userId   = data['user']['id'];
+      if (data['token'] != null)         token    = data['token'];
+      if (data['user']?['id'] != null)   userId   = data['user']['id'];
       if (data['user']?['role'] != null) userRole = data['user']['role'];
       return data;
     } on SocketException {
@@ -112,9 +122,7 @@ class ApiService {
     }
   }
 
-  /// Choose role after register — can only be called ONCE per user
-  /// role must be: "client" or "fournisseur"
-  /// ✅ FIXED: now saves the NEW token returned by backend (token contains role)
+  /// ✅ Saves new token with role after choosing role
   static Future<Map<String, dynamic>> chooseRole({
     required String userId,
     required String role,
@@ -126,8 +134,8 @@ class ApiService {
         body: jsonEncode({'userId': userId, 'role': role}),
       );
       final data = _decode(response);
-      if (data['role'] != null)  userRole      = data['role'];
-      if (data['token'] != null) token         = data['token']; // ✅ save new token with role
+      if (data['role'] != null)  userRole = data['role'];
+      if (data['token'] != null) token    = data['token'];
       return data;
     } on SocketException {
       return {'error': 'Connection error. Check your internet.'};
@@ -142,7 +150,6 @@ class ApiService {
   // CLIENT  →  /api/clients
   // ─────────────────────────────────────────
 
-  /// Get list of all fournisseurs (client only)
   static Future<List<dynamic>> getFournisseurs() async {
     try {
       final response = await http.get(
@@ -158,7 +165,68 @@ class ApiService {
       return [];
     }
   }
-  /// Get fournisseur's own profile including fournisseurInfo.quantiteEau
+
+  static Future<Map<String, dynamic>> getClientInfo() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/clients/me'),
+        headers: _authHeaders,
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // ─────────────────────────────────────────
+  // FOURNISSEUR  →  /api/fournisseurs
+  // ─────────────────────────────────────────
+// ─────────────────────────────────────────
+// OSRM ROUTING  →  Itinéraire camion-client
+// ─────────────────────────────────────────
+
+  /// Récupère la route OSRM entre deux points
+  static Future<Map<String, dynamic>> getRouteOSRM({
+    required double startLat,
+    required double startLng,
+    required double endLat,
+    required double endLng,
+  }) async {
+    try {
+      // Utilisez votre propre instance OSRM ou le public
+      final osrmUrl = 'http://router.project-osrm.org/route/v1/driving/'
+          '$startLng,$startLat;$endLng,$endLat'
+          '?overview=full&geometries=polyline6&steps=true';
+
+      final response = await http.get(
+        Uri.parse(osrmUrl),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['code'] == 'Ok') {
+          return {
+            'success': true,
+            'route': data['routes'][0]['geometry'],  // encoded polyline
+            'duration': data['routes'][0]['duration'],  // secondes
+            'distance': data['routes'][0]['distance'],    // mètres
+            'legs': data['routes'][0]['legs'],
+          };
+        }
+      }
+      return {'success': false, 'error': 'OSRM error'};
+    } on SocketException {
+      return {'success': false, 'error': 'Network error'};
+    } on TimeoutException {
+      return {'success': false, 'error': 'Timeout'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
   static Future<Map<String, dynamic>> getMyInfo() async {
     try {
       final response = await http.get(
@@ -174,11 +242,7 @@ class ApiService {
       return {'error': e.toString()};
     }
   }
-  // ─────────────────────────────────────────
-  // FOURNISSEUR  →  /api/fournisseurs
-  // ─────────────────────────────────────────
 
-  /// Add fournisseur info — quantiteEau & wilayas (fournisseur only)
   static Future<Map<String, dynamic>> addFournisseurInfo({
     required double quantiteEau,
     required List<String> wilayas,
@@ -189,7 +253,7 @@ class ApiService {
         headers: _authHeaders,
         body: jsonEncode({
           'quantiteEau': quantiteEau,
-          'wilayas': wilayas,
+          'wilayas':     wilayas,
         }),
       );
       return _decode(response);
@@ -202,7 +266,6 @@ class ApiService {
     }
   }
 
-  /// Update fournisseur GPS position (fournisseur only)
   static Future<Map<String, dynamic>> updatePosition({
     required double lat,
     required double lon,
@@ -223,7 +286,6 @@ class ApiService {
     }
   }
 
-  /// Set fournisseur offline (fournisseur only)
   static Future<Map<String, dynamic>> setOffline() async {
     try {
       final response = await http.put(
@@ -244,23 +306,24 @@ class ApiService {
   // CHAUFFEUR  →  /api/chauffeurs
   // ─────────────────────────────────────────
 
-  /// Add a new chauffeur (fournisseur only)
+  /// ✅ Only nom, telephone, capaciteCamion — no prenom/adresse
   static Future<Map<String, dynamic>> addChauffeur({
     required String nom,
-    required String prenom,
+    required prenom,
     required String telephone,
-    required String adresse,
+    required adresse,
     required double capaciteCamion,
+
   }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/chauffeurs/add'),
         headers: _authHeaders,
         body: jsonEncode({
-          'nom': nom,
-          'prenom': prenom,
-          'telephone': telephone,
-          'adresse': adresse,
+          'nom':            nom,
+          'prenom':            nom,
+          'telephone':      telephone,
+          'adresse':      telephone,
           'capaciteCamion': capaciteCamion,
         }),
       );
@@ -274,7 +337,6 @@ class ApiService {
     }
   }
 
-  /// Get my chauffeurs (fournisseur only)
   static Future<List<dynamic>> getMyChauffeurs() async {
     try {
       final response = await http.get(
@@ -295,13 +357,12 @@ class ApiService {
   // COMMANDE  →  /api/commandes
   // ─────────────────────────────────────────
 
-  /// Create a new commande (client only)
   static Future<Map<String, dynamic>> addCommande({
     required double capacite,
     required double prix,
     double? lat,
     double? lon,
-    String? fournisseurId, // ✅ add this
+    String? fournisseurId,
   }) async {
     try {
       final response = await http.post(
@@ -309,16 +370,22 @@ class ApiService {
         headers: _authHeaders,
         body: jsonEncode({
           'capacite': capacite,
-          'prix': prix,
-          if (fournisseurId != null) 'fournisseurId': fournisseurId, // ✅
+          'prix':     prix,
+          if (lat != null)           'lat':           lat,
+          if (lon != null)           'lon':           lon,
+          if (fournisseurId != null) 'fournisseurId': fournisseurId,
         }),
       );
       return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
     } catch (e) {
       return {'error': e.toString()};
     }
   }
-  /// Get my commandes (client only)
+
   static Future<List<dynamic>> getMyCommandes() async {
     try {
       final response = await http.get(
@@ -335,7 +402,6 @@ class ApiService {
     }
   }
 
-  /// Get pending commandes only — "en attente" (fournisseur only)
   static Future<List<dynamic>> getPendingCommandes() async {
     try {
       final response = await http.get(
@@ -352,18 +418,12 @@ class ApiService {
     }
   }
 
-  /// ✅ Get ALL commandes with optional status filter (fournisseur only)
-  /// This is what OrdersScreen should use — shows all statuses
-  /// status: "en attente" | "en livraison" | "livrée" | "annulée"
   static Future<List<dynamic>> getCommandes({String? status}) async {
     try {
       final uri = status != null
           ? Uri.parse('$baseUrl/api/commandes?status=${Uri.encodeComponent(status)}')
           : Uri.parse('$baseUrl/api/commandes');
       final response = await http.get(uri, headers: _authHeaders);
-      print('GET /commandes status: ${response.statusCode}');
-      print('GET /commandes body: ${response.body}');
-      print('GET /commandes token: $token');
       return _decodeList(response);
     } on SocketException {
       return [];
@@ -374,7 +434,6 @@ class ApiService {
     }
   }
 
-  /// Assign a chauffeur to a commande (fournisseur only)
   static Future<Map<String, dynamic>> assignCommande({
     required String commandeId,
     required String chauffeurId,
@@ -394,7 +453,6 @@ class ApiService {
     }
   }
 
-  /// Mark commande as delivered (fournisseur only)
   static Future<Map<String, dynamic>> markLivree(String commandeId) async {
     try {
       final response = await http.put(
@@ -411,7 +469,6 @@ class ApiService {
     }
   }
 
-  /// Cancel a commande (client only)
   static Future<Map<String, dynamic>> cancelCommande(String commandeId) async {
     try {
       final response = await http.put(
@@ -429,10 +486,133 @@ class ApiService {
   }
 
   // ─────────────────────────────────────────
-  // AI  →  /api/ai
+  // PYTHON AI  →  VRP NSGA-II (192.168.1.40:8000)
   // ─────────────────────────────────────────
 
-  /// Optimise delivery route via Python AI service
+  /// Check if Python API is running
+  static Future<bool> pythonHealthCheck() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$pythonUrl/health'),
+      ).timeout(const Duration(seconds: 5));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Send chauffeurs to Python for VRP
+  static Future<Map<String, dynamic>> setupConducteurs({
+    required List<dynamic> chauffeurs,
+    required double fournisseurLat,
+    required double fournisseurLon,
+  }) async {
+    try {
+      final conducteurs = chauffeurs.map((c) => {
+        'id':       (c['_id'] ?? c['id']).toString(),
+        'nom':      c['nom'] ?? '',
+        'capacity': (c['capaciteCamion'] as num?)?.toDouble() ?? 0.0,
+        'lat':      fournisseurLat,  // ✅ fournisseur depot position
+        'lon':      fournisseurLon,
+      }).toList();
+
+      final res = await http.post(
+        Uri.parse('$pythonUrl/setup/conducteurs'),
+        headers: _pythonHeaders,
+        body: jsonEncode({'conducteurs': conducteurs}),
+      );
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable. Is it running?'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Send a commande to Python
+  static Future<Map<String, dynamic>> sendCommandeToPython({
+    required String id,
+    required double lat,
+    required double lon,
+    required double demand,
+    String description = '',
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/commandes/add'),
+        headers: _pythonHeaders,
+        body: jsonEncode({
+          'id':          id,
+          'lat':         lat,
+          'lon':         lon,
+          'demand':      demand,
+          'description': description,
+        }),
+      );
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable. Is it running?'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Accept a commande in Python
+  static Future<Map<String, dynamic>> acceptCommandePython(String id) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/commandes/accept'),
+        headers: _pythonHeaders,
+        body: jsonEncode({
+          'commande_id': id,  // ✅ send as string (MongoDB ObjectId)
+          'action':      'accepter',
+        }),
+      );
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable. Is it running?'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Run NSGA-II optimization → returns routes per chauffeur
+  static Future<Map<String, dynamic>> optimize() async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/optimize'),
+        headers: _pythonHeaders,
+        body: jsonEncode({}),
+      ).timeout(const Duration(seconds: 30)); // NSGA-II can take time
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable. Is it running?'};
+    } on TimeoutException {
+      return {'error': 'Optimization timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Get current optimization solution
+  static Future<Map<String, dynamic>> getSolution() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$pythonUrl/optimisation/solution'),
+      );
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // ─────────────────────────────────────────
+  // NODE AI PROXY  →  /api/ai (optional)
+  // ─────────────────────────────────────────
+
+  /// Optimise via Node.js proxy (if configured)
   static Future<Map<String, dynamic>> optimiseRoute(
       Map<String, dynamic> body) async {
     try {

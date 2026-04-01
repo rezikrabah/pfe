@@ -127,10 +127,12 @@ class _ChauffeurScreenState extends State<ChauffeurScreen> {
                         // ✅ Pass all 5 fields to ApiService
                         final result = await ApiService.addChauffeur(
                           nom:            nomCtrl.text.trim(),
-                          telephone:      telCtrl.text.trim(),
-                          capaciteCamion: double.parse(capaciteCtrl.text.trim()),
                           prenom:         prenomCtrl.text.trim(),
+                          telephone:      telCtrl.text.trim(),
                           adresse:        adresseCtrl.text.trim(),
+                          capaciteCamion: double.parse(capaciteCtrl.text.trim()),
+
+
                         );
 
                         print('ADD CHAUFFEUR RESULT: $result');

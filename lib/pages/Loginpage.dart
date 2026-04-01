@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:test2/pages/createaccpage.dart';
 import '../client/clientpage.dart';
 import '../fournisseur/provider_home_screen_FINAL.dart';
 import 'forgotpassword.dart';
@@ -149,7 +150,7 @@ class _LoginpageState extends State<Loginpage> {
                   child: const CircleAvatar(
                     radius: 30,
                     backgroundImage: CachedNetworkImageProvider(
-                      'https://img.freepik.com/premium-vector/water-vector-logo-design-white-background_1277164-15228.jpg',
+                      'https://static.vecteezy.com/system/resources/previews/019/952/881/original/oil-tanker-icon-design-free-vector.jpg',
                     ),
                   ),
                 ),
@@ -316,6 +317,21 @@ class _LoginpageState extends State<Loginpage> {
                               fontSize: 18,
                             ),
                           ),
+                        ),
+
+                      ),
+                      const Text('dont have account?',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => createaccpage()),
+                          );
+                        },
+                        child: const Text('create account',
+                          style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600, fontSize: 15),
                         ),
                       ),
                     ],

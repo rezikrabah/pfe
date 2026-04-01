@@ -2,13 +2,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:test2/client/historique.dart';
 import 'package:test2/pages/Loginpage.dart';
-import 'package:test2/pages/main.dart'; // Pour themeNotifimport '../services/api_service.dart';
-import '../services/api_service.dart';
-
+import 'package:test2/pages/main.dart'; // Pour themeNotifier
 import 'clientpage.dart';
 import 'commandes.dart';
 import 'package:test2/client/suivi.dart';
-
+import '../services/api_service.dart';
 
 class profile extends StatefulWidget {
   const profile({super.key});

@@ -33,7 +33,7 @@ class _LoginState extends State<Login> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const  Text(
-              'LOG IN PAGE ',
+              'LOG in ',
               style: TextStyle(
                 color: Color(0xFF4ECDC4),
                 fontSize: 20,
@@ -72,10 +72,12 @@ body: SingleChildScrollView(
       padding:const EdgeInsets.only(top: 100),
       child:
       const   CircleAvatar(
-            radius: 35,
-            backgroundImage:AssetImage('assets/picture_123.webp'),
+        radius: 35,
+        backgroundImage:CachedNetworkImageProvider(
+          'https://static.vecteezy.com/system/resources/previews/019/952/881/original/oil-tanker-icon-design-free-vector.jpg',
+        ),
 
-          )
+    ),
     ),
 Padding(
   padding:const EdgeInsets.only(top: 200),

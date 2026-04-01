@@ -169,12 +169,12 @@ class _createaccpageState extends State<createaccpage> {
                 width: double.infinity,
                 alignment: Alignment.topCenter,
                 padding: const EdgeInsets.only(top: 10),
-                child: const CircleAvatar(
-                  radius: 20,
-                  backgroundImage: CachedNetworkImageProvider(
-                    'https://img.freepik.com/premium-vector/water-vector-logo-design-white-background_1277164-15228.jpg',
+                child: CircleAvatar(
+                  radius: 25,
+                  backgroundImage:const CachedNetworkImageProvider(
+                    'https://static.vecteezy.com/system/resources/previews/019/952/881/original/oil-tanker-icon-design-free-vector.jpg',
                   ),
-                ),
+                )
               ),
               const Text('sign up',
                 style: TextStyle(color: Color(0xFFFFFFFF), fontSize: 25, fontWeight: FontWeight.w800),
@@ -244,6 +244,19 @@ class _createaccpageState extends State<createaccpage> {
                   ),
                   onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                 ),
+                validator: (v) {
+                  if (v!.isEmpty) return 'please enter your password';
+                  if (v.length < 6) return 'password must be at least 6 characters';
+                  return null;
+                },
+              ),
+              //verifypassword
+              _buildField(
+                controller: _passwordController,
+                label: 'verify your password',
+                hint: 'enter your password',
+                icon: Icons.password,
+                obscure: _obscurePassword,
                 validator: (v) {
                   if (v!.isEmpty) return 'please enter your password';
                   if (v.length < 6) return 'password must be at least 6 characters';

@@ -41,17 +41,16 @@ class _CommandesState extends State<commandes> {
   String?            _fournError;
 
   final List<String> volumes = [
-    '100L', '500L', '1000L', '2 000L', '3 000 L', '5 000 L',
+    '100L', '500L', '1000L', '2000L', '3000L', '5000L',
   ];
 
   @override
   void initState() {
     super.initState();
-    _debugFournisseurs();
     _loadFournisseurs();
   }
 
-  // ── GPS ───────────────────────────────────────────────────
+  // ── GPS — directly gets location ──────────────────────────
   Future<void> _useMyLocation() async {
     setState(() => _gettingLocation = true);
     try {
@@ -73,7 +72,7 @@ class _CommandesState extends State<commandes> {
       });
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Position obtenue ✓'),
+            content: Text('Position GPS obtenue ✓'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 2)));
     } catch (_) {
@@ -83,21 +82,18 @@ class _CommandesState extends State<commandes> {
     }
   }
 
-  // ── Load fournisseurs via ApiService ──────────────────────
+  // ── Load fournisseurs ─────────────────────────────────────
   Future<void> _loadFournisseurs() async {
     setState(() { _loadingFourn = true; _fournError = null; });
-
     final list = await ApiService.getFournisseurs();
-    print('RAW FOURNISSEURS: $list'); // ← check field names
-
+    print('RAW FOURNISSEURS: $list');
     setState(() {
       _loadingFourn = false;
       if (list.isNotEmpty) {
         _fournisseurs = list.map((e) => _Fournisseur.fromJson(e)).toList();
       } else {
-        // ✅ Don't show error icon — show clean empty state
         _fournisseurs = [];
-        _fournError = null; // let _buildNoFourn() handle it
+        _fournError   = null;
       }
     });
   }
@@ -105,20 +101,27 @@ class _CommandesState extends State<commandes> {
   int _parseVolume(String vol) =>
       int.tryParse(vol.replaceAll(' ', '').replaceAll('L', '')) ?? 0;
 
-  // ── Submit order via ApiService ───────────────────────────
+  // ── Submit order ──────────────────────────────────────────
   Future<void> _confirmOrder() async {
     if (!_canConfirm) return;
+
+    // ✅ Block if no GPS — lat/lon required for map routing
+    if (_selectedLat == null || _selectedLon == null) {
+      _showError('Veuillez utiliser le bouton GPS 📍 pour obtenir votre position.');
+      return;
+    }
+
     setState(() => _submitting = true);
     try {
       final demand = _parseVolume(selectedVolume!);
 
-          final result = await ApiService.addCommande(
-      capacite: demand.toDouble(),
-          prix: demand.toDouble() * 2,
-            lat:      _selectedLat,
-            lon:      _selectedLon,
-            fournisseurId: selectedFournisseur!.id,
-          );
+      final result = await ApiService.addCommande(
+        capacite:      demand.toDouble(),
+        prix:          demand.toDouble() * 2,
+        lat:           _selectedLat,   // ✅ always sent
+        lon:           _selectedLon,   // ✅ always sent
+        fournisseurId: selectedFournisseur!.id,
+      );
       print('ADD COMMANDE RESULT: $result');
 
       if (result['error'] != null) {
@@ -139,8 +142,7 @@ class _CommandesState extends State<commandes> {
         Navigator.push(context, MaterialPageRoute(
           builder: (_) => ClientTrackingPage(
             commandeId: orderId,
-            // ✅ Use ApiService.userId instead of hardcoded widget.clientId
-            clientId: ApiService.userId ?? widget.clientId.toString(),
+            clientId:   ApiService.userId ?? widget.clientId.toString(),
           ),
         ));
       }
@@ -150,90 +152,14 @@ class _CommandesState extends State<commandes> {
       if (mounted) setState(() => _submitting = false);
     }
   }
-  Future<void> _debugFournisseurs() async {
-    print('=== DEBUG FOURNISSEURS ===');
-    print('Token: ${ApiService.token}');
 
-    final res = await http.get(
-      Uri.parse('https://pfe-backend-nwmy.onrender.com/api/clients/fournisseurs'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${ApiService.token}',
-      },
-    );
-
-    print('Status: ${res.statusCode}');
-    print('Body: ${res.body}');
-  }
   void _showError(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
-  // ── PICKERS ───────────────────────────────────────────────
-
-  void _showPositionPicker() {
-    final ctrl = TextEditingController(text: selectedPosition ?? '');
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF0F4FF),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _handle(), const SizedBox(height: 12),
-                const Text('Indiquez votre position',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
-                        color: Color(0xFF0C2A34))),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: ctrl, autofocus: true,
-                  style: const TextStyle(color: Color(0xFF1A237E)),
-                  decoration: InputDecoration(
-                    hintText: 'Ex: EL HARRACH, ALGER',
-                    hintStyle: const TextStyle(color: Colors.black38),
-                    prefixIcon: const Icon(Icons.location_on_outlined, color: Color(0xFF2979FF)),
-                    filled: true, fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(spacing: 8, children: [
-                  _quickChip('📍 Ma position actuelle', () {
-                    Navigator.pop(context);
-                    _useMyLocation();
-                  }),
-                ]),
-                const SizedBox(height: 16),
-                SizedBox(width: double.infinity, child: ElevatedButton(
-                  onPressed: () {
-                    if (ctrl.text.trim().isNotEmpty)
-                      setState(() => selectedPosition = ctrl.text.trim());
-                    Navigator.pop(context);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2979FF),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: const Text('Confirmer',
-                      style: TextStyle(color: Colors.white, fontSize: 16)),
-                )),
-              ]),
-        ),
-      ),
-    );
-  }
-
+  // ── Volume Picker ─────────────────────────────────────────
   void _showVolumePicker() {
     showModalBottomSheet(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
@@ -253,7 +179,7 @@ class _CommandesState extends State<commandes> {
             itemCount: volumes.length,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemBuilder: (_, i) {
-              final vol = volumes[i];
+              final vol   = volumes[i];
               final isSel = vol == selectedVolume;
               return GestureDetector(
                 onTap: () { setState(() => selectedVolume = vol); Navigator.pop(context); },
@@ -263,13 +189,15 @@ class _CommandesState extends State<commandes> {
                   decoration: BoxDecoration(
                     color: isSel ? const Color(0xFF2979FF) : Colors.white,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: isSel ? const Color(0xFF2979FF) : Colors.black12),
+                    border: Border.all(
+                        color: isSel ? const Color(0xFF2979FF) : Colors.black12),
                   ),
                   child: Row(children: [
                     Icon(Icons.water_drop,
                         color: isSel ? Colors.white : const Color(0xFF2979FF)),
                     const SizedBox(width: 14),
-                    Text(vol, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600,
+                    Text(vol, style: TextStyle(fontSize: 16,
+                        fontWeight: FontWeight.w600,
                         color: isSel ? Colors.white : const Color(0xFF1A237E))),
                     const Spacer(),
                     if (isSel) const Icon(Icons.check_circle, color: Colors.white),
@@ -283,6 +211,7 @@ class _CommandesState extends State<commandes> {
     );
   }
 
+  // ── Fournisseur Picker ────────────────────────────────────
   void _showFournisseurPicker() {
     showModalBottomSheet(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
@@ -334,7 +263,6 @@ class _CommandesState extends State<commandes> {
   }
 
   // ── Widgets ───────────────────────────────────────────────
-
   Widget _buildFournTile(_Fournisseur f, bool isSel) => GestureDetector(
     onTap: () { setState(() => selectedFournisseur = f); Navigator.pop(context); },
     child: Container(
@@ -350,7 +278,8 @@ class _CommandesState extends State<commandes> {
       child: Row(children: [
         CircleAvatar(
           backgroundColor: isSel ? Colors.white24 : const Color(0xFF0C2A34),
-          child: Icon(Icons.store, color: isSel ? Colors.white : const Color(0xFF2979FF)),
+          child: Icon(Icons.store,
+              color: isSel ? Colors.white : const Color(0xFF2979FF)),
         ),
         const SizedBox(width: 14),
         Expanded(child: Text(f.nom,
@@ -376,7 +305,8 @@ class _CommandesState extends State<commandes> {
         },
         icon: const Icon(Icons.refresh), label: const Text('Réessayer'),
         style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2979FF), foregroundColor: Colors.white),
+            backgroundColor: const Color(0xFF2979FF),
+            foregroundColor: Colors.white),
       ),
     ]),
   ));
@@ -387,47 +317,67 @@ class _CommandesState extends State<commandes> {
       Icon(Icons.store_mall_directory_outlined, size: 48, color: Colors.grey[400]),
       const SizedBox(height: 12),
       Text('Aucun fournisseur disponible',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey[600])),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
+              color: Colors.grey[600])),
       const SizedBox(height: 8),
       Text('Aucun fournisseur enregistré pour l\'instant.',
-          textAlign: TextAlign.center, style: TextStyle(color: Colors.grey[500])),
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey[500])),
     ]),
   ));
 
-  Widget _handle() => Center(child: Container(width: 40, height: 4,
-      decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(2))));
+  Widget _handle() => Center(child: Container(
+    width: 40, height: 4,
+    decoration: BoxDecoration(
+        color: Colors.black26, borderRadius: BorderRadius.circular(2)),
+  ));
 
   Widget _quickChip(String label, VoidCallback onTap) => ActionChip(
-    label: Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFF1A237E))),
-    backgroundColor: Colors.white, side: const BorderSide(color: Colors.black12),
+    label: Text(label,
+        style: const TextStyle(fontSize: 12, color: Color(0xFF1A237E))),
+    backgroundColor: Colors.white,
+    side: const BorderSide(color: Colors.black12),
     onPressed: onTap,
   );
 
-  Widget _fieldTile({required IconData icon, required String hint, required String? value,
-    required Widget trailing, required VoidCallback onTap}) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-          decoration: BoxDecoration(color: Colors.white,
-              borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.black12)),
-          child: Row(children: [
-            Icon(icon, color: value != null ? const Color(0xFF2979FF) : Colors.black38, size: 22),
-            const SizedBox(width: 14),
-            Expanded(child: Text(value ?? hint, style: TextStyle(
-              color: value != null ? const Color(0xFF1A237E) : Colors.black38, fontSize: 15,
-              fontWeight: value != null ? FontWeight.w600 : FontWeight.normal,
-            ))),
-            trailing,
-          ]),
-        ),
-      );
+  Widget _fieldTile({
+    required IconData icon,
+    required String hint,
+    required String? value,
+    required Widget trailing,
+    required VoidCallback onTap,
+  }) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.black12)),
+      child: Row(children: [
+        Icon(icon,
+            color: value != null ? const Color(0xFF2979FF) : Colors.black38,
+            size: 22),
+        const SizedBox(width: 14),
+        Expanded(child: Text(value ?? hint, style: TextStyle(
+          color: value != null ? const Color(0xFF1A237E) : Colors.black38,
+          fontSize: 15,
+          fontWeight: value != null ? FontWeight.w600 : FontWeight.normal,
+        ))),
+        trailing,
+      ]),
+    ),
+  );
 
+  // ✅ GPS required for confirm button to be enabled
   bool get _canConfirm =>
-      selectedPosition != null && selectedVolume != null && selectedFournisseur != null;
+      selectedPosition != null &&
+          selectedVolume != null &&
+          selectedFournisseur != null &&
+          _selectedLat != null &&
+          _selectedLon != null;
 
   // ── BUILD ─────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -436,56 +386,89 @@ class _CommandesState extends State<commandes> {
         backgroundColor: const Color(0xFFF0F4FF), elevation: 0,
         leading: const BackButton(color: Color(0xFF1A237E)),
         title: const Text('commandes',
-            style: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.bold)),
-        actions: [Padding(padding: const EdgeInsets.only(right: 16),
-            child: Icon(Icons.water_drop, color: Colors.blue.shade400))],
+            style: TextStyle(
+                color: Color(0xFF1A237E), fontWeight: FontWeight.bold)),
+        actions: [
+          Padding(padding: const EdgeInsets.only(right: 16),
+              child: Icon(Icons.water_drop, color: Colors.blue.shade400))
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(children: [
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.white,
+            decoration: BoxDecoration(
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: Colors.black12)),
             child: Column(children: [
+
+              // ✅ Position — directly triggers GPS
               _fieldTile(
                 icon: Icons.radio_button_unchecked,
-                hint: 'Indiquez votre position',
-                value: _gettingLocation ? 'Localisation en cours...' : selectedPosition,
-                onTap: _gettingLocation ? () {} : _showPositionPicker,
+                hint: 'Appuyez pour obtenir votre GPS 📍',
+                value: _gettingLocation
+                    ? 'Localisation en cours...'
+                    : selectedPosition,
+                onTap: _gettingLocation ? () {} : _useMyLocation, // ✅ direct GPS
                 trailing: _gettingLocation
-                    ? Container(width: 34, height: 34, padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: const Color(0xFF1A237E),
+                    ? Container(
+                    width: 34, height: 34,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFF1A237E),
                         borderRadius: BorderRadius.circular(10)),
-                    child: const CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : Container(padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: const Color(0xFF1A237E),
+                    child: const CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                    : Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                        color: _selectedLat != null
+                            ? Colors.green  // ✅ green when GPS obtained
+                            : const Color(0xFF1A237E),
                         borderRadius: BorderRadius.circular(10)),
-                    child: const Icon(Icons.location_on, color: Colors.white, size: 18)),
+                    child: const Icon(Icons.location_on,
+                        color: Colors.white, size: 18)),
               ),
               const SizedBox(height: 12),
+
+              // Volume
               _fieldTile(
-                icon: Icons.radio_button_unchecked, hint: "Volume d'eau",
-                value: selectedVolume, onTap: _showVolumePicker,
-                trailing: Container(padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: const Color(0xFF1A237E),
+                icon: Icons.radio_button_unchecked,
+                hint: "Volume d'eau",
+                value: selectedVolume,
+                onTap: _showVolumePicker,
+                trailing: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFF1A237E),
                         borderRadius: BorderRadius.circular(10)),
-                    child: const Icon(Icons.water_drop, color: Colors.white, size: 18)),
+                    child: const Icon(Icons.water_drop,
+                        color: Colors.white, size: 18)),
               ),
               const SizedBox(height: 12),
+
+              // Fournisseur
               _fieldTile(
-                icon: Icons.radio_button_unchecked, hint: 'Choisir un fournisseur',
-                value: selectedFournisseur?.nom, onTap: _showFournisseurPicker,
+                icon: Icons.radio_button_unchecked,
+                hint: 'Choisir un fournisseur',
+                value: selectedFournisseur?.nom,
+                onTap: _showFournisseurPicker,
                 trailing: Stack(alignment: Alignment.topRight, children: [
-                  Container(padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: const Color(0xFF1A237E),
+                  Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFF1A237E),
                           borderRadius: BorderRadius.circular(10)),
-                      child: const Icon(Icons.store, color: Colors.white, size: 18)),
+                      child: const Icon(Icons.store,
+                          color: Colors.white, size: 18)),
                   if (_loadingFourn)
-                    const Positioned(top: 0, right: 0,
+                    const Positioned(
+                        top: 0, right: 0,
                         child: SizedBox(width: 10, height: 10,
-                            child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.blue))),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 1.5, color: Colors.blue))),
                 ]),
               ),
             ]),
@@ -493,37 +476,71 @@ class _CommandesState extends State<commandes> {
 
           const Spacer(),
 
+          // ✅ GPS hint if not obtained yet
+          if (_selectedLat == null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.shade200)),
+              child: Row(children: [
+                Icon(Icons.info_outline,
+                    color: Colors.orange.shade700, size: 20),
+                const SizedBox(width: 8),
+                Expanded(child: Text(
+                    'Appuyez sur le champ position pour activer le GPS',
+                    style: TextStyle(
+                        color: Colors.orange.shade700, fontSize: 12))),
+              ]),
+            ),
+
           if (selectedFournisseur != null)
             Container(
               margin: const EdgeInsets.only(bottom: 12),
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.green.shade50,
+              decoration: BoxDecoration(
+                  color: Colors.green.shade50,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.green.shade200)),
               child: Row(children: [
-                Icon(Icons.check_circle, color: Colors.green.shade600, size: 20),
+                Icon(Icons.check_circle,
+                    color: Colors.green.shade600, size: 20),
                 const SizedBox(width: 8),
-                Expanded(child: Text('Fournisseur : ${selectedFournisseur!.nom}',
-                    style: TextStyle(color: Colors.green.shade700,
-                        fontWeight: FontWeight.w600, fontSize: 13))),
+                Expanded(child: Text(
+                    'Fournisseur : ${selectedFournisseur!.nom}',
+                    style: TextStyle(
+                        color: Colors.green.shade700,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13))),
               ]),
             ),
 
-          SizedBox(width: double.infinity, child: ElevatedButton(
-            onPressed: (_canConfirm && !_submitting) ? _confirmOrder : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2979FF),
-              disabledBackgroundColor: Colors.black12,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: (_canConfirm && !_submitting) ? _confirmOrder : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2979FF),
+                disabledBackgroundColor: Colors.black12,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+              ),
+              child: _submitting
+                  ? const SizedBox(height: 20, width: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+                  : Text('Confirmer la commande',
+                  style: TextStyle(
+                      color: _canConfirm
+                          ? Colors.white
+                          : Colors.black38,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold)),
             ),
-            child: _submitting
-                ? const SizedBox(height: 20, width: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Text('Confirmer la commande',
-                style: TextStyle(color: _canConfirm ? Colors.white : Colors.black38,
-                    fontSize: 16, fontWeight: FontWeight.bold)),
-          )),
+          ),
           const SizedBox(height: 16),
         ]),
       ),
