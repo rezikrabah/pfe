@@ -46,9 +46,13 @@ class _suiviState extends State<suivi> {
   void initState() {
     super.initState();
     _loadSolution();
+    _loadOnlineFournisseurs(); // 👈
     _startGpsTracking();
     _refreshTimer = Timer.periodic(
-        const Duration(seconds: 30), (_) => _loadSolution());
+        const Duration(seconds: 30), (_) {
+      _loadSolution();
+      _loadOnlineFournisseurs(); // 👈 refresh every 30s too
+    });
   }
 
   @override
@@ -57,6 +61,25 @@ class _suiviState extends State<suivi> {
     super.dispose();
   }
 
+  List<Map<String, dynamic>> _onlineFournisseurs = [];
+
+  Future<void> _loadOnlineFournisseurs() async {
+    final list = await ApiService.getFournisseurs();
+    print('🔍 Total fournisseurs from API: ${list.length}');
+    for (var f in list) {
+      print('👤 ${f['nom']} | isOnline: ${f['isOnline']} | position: ${f['position']}');
+    }
+    setState(() {
+      _onlineFournisseurs = list
+          .where((f) =>
+      f['isOnline'] == true &&
+          f['position']?['lat'] != null &&
+          f['position']?['lon'] != null)
+          .map((f) => Map<String, dynamic>.from(f))
+          .toList();
+    });
+    print('✅ Online with position: ${_onlineFournisseurs.length}');
+  }
   // ── Load solution using OSRM ──────────────────────────────
   Future<void> _loadSolution() async {
     setState(() { _loadingRoutes = true; _routeError = null; });
@@ -220,9 +243,41 @@ class _suiviState extends State<suivi> {
                 if (_myPosition != null)
                   Marker(
                     point: _myPosition!, width: 40, height: 40,
-                    child: const Icon(Icons.my_location,
-                        color: Colors.blue, size: 36),
+                    child: const Icon(Icons.my_location, color: Colors.blue, size: 36),
                   ),
+
+                // 👇 Online fournisseurs markers
+                ..._onlineFournisseurs.map((f) {
+                  final lat = (f['position']['lat'] as num).toDouble();
+                  final lon = (f['position']['lon'] as num).toDouble();
+                  final nom = '${f['prenom'] ?? ''} ${f['nom'] ?? ''}'.trim();
+                  return Marker(
+                    point: LatLng(lat, lon),
+                    width: 60,
+                    height: 60,
+                    child: Tooltip(
+                      message: nom.isNotEmpty ? nom : 'Chauffeur',
+                      child: Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.teal,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              nom.isNotEmpty ? nom.split(' ').first : 'Livreur',
+                              style: const TextStyle(color: Colors.white, fontSize: 9),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const Icon(Icons.local_shipping, color: Colors.teal, size: 28),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+
                 ..._markers,
               ]),
             ],

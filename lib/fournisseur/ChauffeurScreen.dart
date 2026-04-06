@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import '../services/api_service.dart';
+import '../gerant/profile_gerant.dart';
 
 class ChauffeurScreen extends StatefulWidget {
   const ChauffeurScreen({Key? key}) : super(key: key);
@@ -11,6 +13,7 @@ class ChauffeurScreen extends StatefulWidget {
 class _ChauffeurScreenState extends State<ChauffeurScreen> {
   List<dynamic> _chauffeurs = [];
   bool _loading = true;
+  int _expandedIndex = -1;
 
   @override
   void initState() {
@@ -21,307 +24,236 @@ class _ChauffeurScreenState extends State<ChauffeurScreen> {
   Future<void> _loadChauffeurs() async {
     setState(() => _loading = true);
     final data = await ApiService.getMyChauffeurs();
-    print('CHAUFFEURS: $data');
     setState(() {
       _chauffeurs = data;
-      _loading    = false;
+      _loading = false;
     });
   }
 
-  // ── Add chauffeur bottom sheet ─────────────────────────────
-  void _showAddDialog() {
-    final nomCtrl      = TextEditingController();
-    final prenomCtrl   = TextEditingController();
-    final telCtrl      = TextEditingController();
-    final adresseCtrl  = TextEditingController();
-    final capaciteCtrl = TextEditingController();
-    final formKey      = GlobalKey<FormState>();
-    bool submitting    = false;
+  Future<void> _deleteChauffeur(Map<String, dynamic> chauffeur, int index) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    showModalBottomSheet(
+    final confirmed = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setModalState) => Padding(
-          padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF0F4FF),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: Form(
-              key: formKey,
-              child: SingleChildScrollView(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  // Handle
-                  Center(child: Container(
-                    width: 40, height: 4,
-                    decoration: BoxDecoration(
-                        color: Colors.black26,
-                        borderRadius: BorderRadius.circular(2)),
-                  )),
-                  const SizedBox(height: 16),
-                  const Text('Ajouter un chauffeur',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
-                          color: Color(0xFF1A237E))),
-                  const SizedBox(height: 20),
-
-                  // ✅ Nom
-                  TextFormField(
-                    controller: nomCtrl,
-                    decoration: _inputDeco('Nom', Icons.badge),
-                    validator: (v) => v!.isEmpty ? 'Requis' : null,
-                  ),
-                  const SizedBox(height: 12),
-
-                  // ✅ Prenom
-                  TextFormField(
-                    controller: prenomCtrl,
-                    decoration: _inputDeco('Prénom', Icons.person),
-                    validator: (v) => v!.isEmpty ? 'Requis' : null,
-                  ),
-                  const SizedBox(height: 12),
-
-                  // ✅ Telephone
-                  TextFormField(
-                    controller: telCtrl,
-                    keyboardType: TextInputType.phone,
-                    decoration: _inputDeco('Téléphone', Icons.phone),
-                    validator: (v) => v!.isEmpty ? 'Requis' : null,
-                  ),
-                  const SizedBox(height: 12),
-
-                  // ✅ Adresse
-                  TextFormField(
-                    controller: adresseCtrl,
-                    decoration: _inputDeco('Adresse', Icons.location_on),
-                    validator: (v) => v!.isEmpty ? 'Requis' : null,
-                  ),
-                  const SizedBox(height: 12),
-
-                  // ✅ Capacite camion
-                  TextFormField(
-                    controller: capaciteCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: _inputDeco('Capacité camion (L)', Icons.local_shipping),
-                    validator: (v) {
-                      if (v!.isEmpty) return 'Requis';
-                      if (double.tryParse(v) == null) return 'Nombre invalide';
-                      if (double.parse(v) <= 0) return 'Doit être > 0';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Submit button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: submitting ? null : () async {
-                        if (!formKey.currentState!.validate()) return;
-                        setModalState(() => submitting = true);
-
-                        // ✅ Pass all 5 fields to ApiService
-                        final result = await ApiService.addChauffeur(
-                          nom:            nomCtrl.text.trim(),
-                          prenom:         prenomCtrl.text.trim(),
-                          telephone:      telCtrl.text.trim(),
-                          adresse:        adresseCtrl.text.trim(),
-                          capaciteCamion: double.parse(capaciteCtrl.text.trim()),
-
-
-                        );
-
-                        print('ADD CHAUFFEUR RESULT: $result');
-                        setModalState(() => submitting = false);
-
-                        if (result['error'] != null ||
-                            (result['msg'] != null &&
-                                result['msg'].toString().contains('obligatoires'))) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text(result['error'] ?? result['msg']),
-                            backgroundColor: Colors.red,
-                          ));
-                        } else {
-                          Navigator.pop(context);
-                          _loadChauffeurs();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Chauffeur ajouté ✓'),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1E3A8A),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                      child: submitting
-                          ? const SizedBox(width: 20, height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                          : const Text('Ajouter',
-                          style: TextStyle(color: Colors.white,
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                ]),
-              ),
-            ),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF0B3C49) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+            child: const Icon(Icons.delete_outline, color: Colors.red, size: 22),
           ),
+          const SizedBox(width: 12),
+          Text('Supprimer', style: TextStyle(color: isDark ? Colors.white : const Color(0xFF1A237E), fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(
+          'Voulez-vous vraiment supprimer ${chauffeur['prenom']} ${chauffeur['nom']} ?',
+          style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Annuler', style: TextStyle(color: isDark ? Colors.white54 : Colors.black54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+            child: const Text('Supprimer', style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
+
+    if (confirmed != true) return;
+
+    try {
+      // Remove from gerant's chauffeurs array using the user's _id
+      await ApiService.deleteChauffeur(chauffeur['_id'] ?? chauffeur['id']);
+
+      setState(() {
+        _chauffeurs.removeAt(index);
+        if (_expandedIndex == index) _expandedIndex = -1;
+        if (_expandedIndex > index) _expandedIndex--;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text('${chauffeur['prenom']} ${chauffeur['nom']} retiré'),
+          ]),
+          backgroundColor: const Color(0xFF2979FF),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Erreur lors de la suppression'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 
-  InputDecoration _inputDeco(String hint, IconData icon) => InputDecoration(
-    hintText: hint,
-    prefixIcon: Icon(icon, color: const Color(0xFF1E3A8A)),
-    filled: true,
-    fillColor: Colors.white,
-    border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide.none),
-    focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF1E3A8A))),
-  );
-
-  // ── BUILD ─────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: isDark ? Theme.of(context).scaffoldBackgroundColor : const Color(0xFFF0F4FF),
       appBar: AppBar(
-        title: const Text('Mes Chauffeurs'),
-        backgroundColor: const Color(0xFF1E3A8A),
-        foregroundColor: Colors.white,
+        backgroundColor: isDark ? Theme.of(context).scaffoldBackgroundColor : const Color(0xFFF0F4FF),
+        elevation: 0,
+        leading: BackButton(color: isDark ? Colors.white : const Color(0xFF1A237E)),
+        title: Text('Mes Chauffeurs', style: TextStyle(color: isDark ? Colors.white : const Color(0xFF1A237E), fontWeight: FontWeight.bold)),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadChauffeurs),
+          GestureDetector(
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileGerantScreen())),
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: isDark ? const Color(0xFF0D4D5E) : Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: isDark ? Colors.white12 : Colors.black12)),
+              child: const Icon(CupertinoIcons.person_crop_circle, color: Color(0xFF2979FF), size: 20),
+            ),
+          ),
+          GestureDetector(
+            onTap: _loadChauffeurs,
+            child: Container(
+              margin: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: isDark ? const Color(0xFF0D4D5E) : Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: isDark ? Colors.white12 : Colors.black12)),
+              child: const Icon(Icons.refresh, color: Color(0xFF2979FF), size: 20),
+            ),
+          ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddDialog,
-        backgroundColor: const Color(0xFF1E3A8A),
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text('Ajouter chauffeur',
-            style: TextStyle(color: Colors.white)),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _chauffeurs.isEmpty
-          ? Center(child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.person_off, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 16),
-          Text('Aucun chauffeur',
-              style: TextStyle(fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[600])),
-          const SizedBox(height: 8),
-          Text('Ajoutez votre premier chauffeur',
-              style: TextStyle(color: Colors.grey[500])),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _showAddDialog,
-            icon: const Icon(Icons.add),
-            label: const Text('Ajouter'),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1E3A8A),
-                foregroundColor: Colors.white),
-          ),
-        ],
-      ))
-          : RefreshIndicator(
-        onRefresh: _loadChauffeurs,
-        child: ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: _chauffeurs.length,
-          itemBuilder: (_, i) =>
-              _buildChauffeurCard(_chauffeurs[i]),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChauffeurCard(Map<String, dynamic> c) {
-    final nom      = c['nom']    ?? '';
-    final prenom   = c['prenom'] ?? '';
-    final tel      = c['telephone'] ?? '-';
-    final adresse  = c['adresse']   ?? '-';
-    final capacite = (c['capaciteCamion'] as num?)?.toDouble() ?? 0.0;
-    final disponible = c['disponible'] as bool? ?? true;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border(left: BorderSide(
-            color: disponible ? Colors.green : Colors.orange, width: 4)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05),
-            blurRadius: 8, offset: const Offset(0, 2))],
-      ),
-      child: Row(children: [
-        CircleAvatar(
-          backgroundColor: const Color(0xFF1E3A8A).withOpacity(0.1),
-          radius: 24,
-          child: const Icon(Icons.person, color: Color(0xFF1E3A8A), size: 28),
-        ),
-        const SizedBox(width: 14),
-        Expanded(child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('$prenom $nom',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Row(children: [
-              const Icon(Icons.phone, size: 14, color: Colors.grey),
-              const SizedBox(width: 4),
-              Text(tel, style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-            ]),
-            const SizedBox(height: 2),
-            Row(children: [
-              const Icon(Icons.location_on, size: 14, color: Colors.grey),
-              const SizedBox(width: 4),
-              Expanded(child: Text(adresse,
-                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                  overflow: TextOverflow.ellipsis)),
-            ]),
-            const SizedBox(height: 2),
-            Row(children: [
-              const Icon(Icons.local_shipping, size: 14, color: Colors.blue),
-              const SizedBox(width: 4),
-              Text('${capacite.toStringAsFixed(0)} L',
-                  style: const TextStyle(color: Colors.blue, fontSize: 13)),
-            ]),
-          ],
-        )),
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF2979FF)))
+          : Column(children: [
+        // Header Stats
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: disponible
-                ? Colors.green.withOpacity(0.1)
-                : Colors.orange.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
+            gradient: const LinearGradient(colors: [Color(0xFF1A237E), Color(0xFF2979FF)]),
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: Text(
-            disponible ? 'Disponible' : 'Occupé',
-            style: TextStyle(
-                color: disponible ? Colors.green : Colors.orange,
-                fontSize: 12, fontWeight: FontWeight.bold),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+            _buildStat('${_chauffeurs.length}', 'Total'),
+            _buildStat('${_chauffeurs.where((c) => c['isOnline'] == true).length}', 'En ligne'),
+            _buildStat('${_chauffeurs.where((c) => c['isOnline'] != true).length}', 'Hors ligne'),
+          ]),
+        ),
+        _chauffeurs.isEmpty
+            ? Expanded(
+          child: Center(
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.people_outline, size: 64, color: isDark ? Colors.white24 : Colors.black12),
+              const SizedBox(height: 12),
+              Text('Aucun chauffeur pour l\'instant',
+                  style: TextStyle(color: isDark ? Colors.white38 : Colors.black38, fontSize: 14)),
+              const SizedBox(height: 6),
+              Text('Partagez votre code aux chauffeurs',
+                  style: TextStyle(color: isDark ? Colors.white24 : Colors.black26, fontSize: 12)),
+            ]),
+          ),
+        )
+            : Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+            itemCount: _chauffeurs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, i) => _buildChauffeurCard(_chauffeurs[i], i, isDark),
           ),
         ),
       ]),
+    );
+  }
+
+  Widget _buildStat(String val, String label) => Column(children: [
+    Text(val, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+    Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+  ]);
+
+  Widget _buildChauffeurCard(Map<String, dynamic> c, int index, bool isDark) {
+    final isExpanded = _expandedIndex == index;
+    final isOnline = c['isOnline'] == true;
+
+    return GestureDetector(
+      onTap: () => setState(() => _expandedIndex = isExpanded ? -1 : index),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF0B3C49) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(children: [
+          Row(children: [
+            Stack(children: [
+              CircleAvatar(
+                backgroundColor: const Color(0xFF2979FF),
+                child: Text(c['nom'][0], style: const TextStyle(color: Colors.white)),
+              ),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: isOnline ? Colors.green : Colors.grey,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: isDark ? const Color(0xFF0B3C49) : Colors.white, width: 1.5),
+                  ),
+                ),
+              ),
+            ]),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${c['prenom']} ${c['nom']}',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+                Text(isOnline ? 'En ligne' : 'Hors ligne',
+                    style: TextStyle(fontSize: 11, color: isOnline ? Colors.green : Colors.grey)),
+              ]),
+            ),
+            Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey),
+          ]),
+          if (isExpanded) ...[
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Row(children: [
+              const Icon(Icons.phone, size: 15, color: Colors.grey),
+              const SizedBox(width: 6),
+              Text(c['telephone'] ?? '-', style: const TextStyle(color: Colors.grey, fontSize: 13)),
+            ]),
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.location_on, size: 15, color: Colors.grey),
+              const SizedBox(width: 6),
+              Expanded(child: Text(c['adresse'] ?? '-', style: const TextStyle(color: Colors.grey, fontSize: 13))),
+            ]),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _deleteChauffeur(c, index),
+                icon: const Icon(Icons.person_remove_outlined, size: 18, color: Colors.red),
+                label: const Text('Retirer ce chauffeur', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red, width: 1.2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+          ],
+        ]),
+      ),
     );
   }
 }

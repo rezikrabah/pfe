@@ -105,26 +105,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _acceptOrder(String orderId) async {
     setState(() => _loading = true);
     try {
-      final chauffeurs = await ApiService.getMyChauffeurs();
+      // ✅ Use the fournisseur (account owner) as the chauffeur directly
+      final fournisseurInfo = await ApiService.getMyInfo();
+      final chauffeurId = (fournisseurInfo['_id'] ?? fournisseurInfo['id'] ?? ApiService.userId).toString();
 
-      if (chauffeurs.isEmpty) {
-        _showError('Aucun chauffeur trouvé. Ajoutez un chauffeur d\'abord.');
+      if (chauffeurId.isEmpty) {
+        _showError('Impossible de récupérer votre identifiant.');
         setState(() => _loading = false);
         return;
       }
-
-      final available = chauffeurs.where((c) {
-        final dispo = c['disponible'];
-        return dispo == true || dispo == 1;
-      }).toList();
-
-      if (available.isEmpty) {
-        _showError('Tous vos chauffeurs sont occupés.');
-        setState(() => _loading = false);
-        return;
-      }
-
-      final chauffeurId = (available.first['_id'] ?? available.first['id']).toString();
 
       final result = await ApiService.assignCommande(
         commandeId:  orderId,
@@ -134,7 +123,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (result['error'] != null) {
         _showError(result['error']);
       } else {
-        // ✅ Update local state
         setState(() {
           final idx = orders.indexWhere((o) => o['id'] == orderId);
           if (idx != -1) orders[idx]['status'] = 'accepted';
@@ -142,30 +130,34 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Commande acceptée et chauffeur assigné ✓'),
+            content: Text('Commande acceptée ✓'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 2),
           ));
         }
 
-        // ✅ Send to Python for VRP optimization
-        final order = orders.firstWhere(
-              (o) => o['id'] == orderId,
-          orElse: () => {},
-        );
+        // ✅ VRP optimization using fournisseur as the single "chauffeur"
+        final order = orders.firstWhere((o) => o['id'] == orderId, orElse: () => {});
 
         if (order.isNotEmpty) {
-          // 1 — Send chauffeurs to Python
-          final fournisseurInfo = await ApiService.getMyInfo();
           final fLat = (fournisseurInfo['position']?['lat'] as num?)?.toDouble() ?? 0.0;
           final fLon = (fournisseurInfo['position']?['lon'] as num?)?.toDouble() ?? 0.0;
+
+          // Wrap fournisseur as a single chauffeur entry
+          final selfAsChauffeur = [
+            {
+              '_id': chauffeurId,
+              'nom': fournisseurInfo['nom'] ?? 'Moi',
+              'disponible': true,
+            }
+          ];
+
           await ApiService.setupConducteurs(
-            chauffeurs:     chauffeurs,
+            chauffeurs:     selfAsChauffeur,
             fournisseurLat: fLat,
             fournisseurLon: fLon,
           );
 
-          // 2 — Send commande to Python
           await ApiService.sendCommandeToPython(
             id:     orderId,
             lat:    (order['position']?['lat'] as num?)?.toDouble() ?? order['lat'] ?? 0.0,
@@ -173,10 +165,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
             demand: (order['quantity'] as num?)?.toDouble() ?? 0.0,
           );
 
-          // 3 — Accept in Python
           await ApiService.acceptCommandePython(orderId);
 
-          // 4 — Run NSGA-II
           final optimResult = await ApiService.optimize();
 
           if (optimResult['error'] == null && mounted) {
@@ -196,7 +186,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
-
 
   // ── Refuse order ──────────────────────────────────────────
   Future<void> _refuseOrder(String orderId) async {

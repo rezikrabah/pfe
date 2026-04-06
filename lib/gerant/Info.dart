@@ -11,20 +11,19 @@ import 'package:flutter/material.dart';
 import 'package:test2/pages/Loginpage.dart';
 import 'package:test2/pages/main.dart';
 
-import 'ChauffeurScreen.dart';
-import 'Join_gerant_screen.dart';
+
 
 // ================================================================
 // 1. ÉCRAN PRINCIPAL DU PROFIL
 // ================================================================
-class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({Key? key}) : super(key: key);
+class gerantinfos extends StatefulWidget {
+  const gerantinfos({Key? key}) : super(key: key);
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  State<gerantinfos> createState() => _gerantinfosState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _gerantinfosState extends State<gerantinfos> {
 
   final Map<String, dynamic> providerData = {
     'name': 'Ahmed Transport Eau',
@@ -37,33 +36,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     'memberSince': 'Janvier 2024',
   };
 
-  void _logout() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Theme.of(context).cardColor,
-        title: Text('Se déconnecter', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
-        content: Text('Êtes-vous sûr de vouloir vous déconnecter ?', style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7))),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => Loginpage(),
-                ),
-              );
-            },
-            child: const Text('Se déconnecter', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -71,7 +44,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       // scaffoldBackgroundColor s'adapte automatiquement au thème
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Profil'),
+        title: const Text('Profil gerant'),
         backgroundColor: const Color(0xFF1E3A8A),
         foregroundColor: Colors.white,
         elevation: 0,
@@ -89,12 +62,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             _buildProfileHeader(),
             const SizedBox(height: 16),
-            _buildStatsSection(),
-            const SizedBox(height: 16),
             _buildSettingsMenu(),
             const SizedBox(height: 24),
-            _buildLogoutButton(),
-            const SizedBox(height: 32),
           ],
         ),
       ),
@@ -158,41 +127,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildStatsSection() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        // cardColor = blanc en mode clair, gris foncé en mode sombre
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 2))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Statistiques Globales',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(child: _buildStatCard(icon: Icons.local_shipping, label: 'Camions', value: '${providerData['trucks']}', color: const Color(0xFF1E3A8A))),
-              const SizedBox(width: 12),
-              Expanded(child: _buildStatCard(icon: Icons.water_drop, label: 'Capacité totale', value: '${providerData['totalCapacity']} L', color: Colors.blue)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: _buildStatCard(icon: Icons.delivery_dining, label: 'Livraisons', value: '${providerData['totalDeliveries']}', color: Colors.green)),
-              const SizedBox(width: 12),
-              Expanded(child: _buildStatCard(icon: Icons.star, label: 'Note', value: '${providerData['rating']}/5', color: Colors.amber)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildStatCard({required IconData icon, required String label, required String value, required Color color}) {
     return Container(
@@ -267,15 +202,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               );
             },
           ),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const JoinGerantScreen())),
-            icon: const Icon(Icons.local_shipping),
-            label: const Text('join ton gerant'),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1E3A8A),
-                foregroundColor: Colors.white),
-          ),
+
         ],
       ),
     );
@@ -318,26 +245,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Divider(height: 1, indent: 76, endIndent: 20, color: Theme.of(context).dividerColor);
   }
 
-  Widget _buildLogoutButton() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: _logout,
-          icon: const Icon(Icons.logout),
-          label: const Text('Se déconnecter', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            elevation: 0,
-          ),
-        ),
-      ),
-    );
-  }
+
 }
 
 // ================================================================

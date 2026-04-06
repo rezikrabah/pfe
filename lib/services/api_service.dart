@@ -45,7 +45,8 @@ class ApiService {
       return jsonDecode(response.body);
     } catch (_) {
       return {
-        'error': 'Server returned unexpected response (status ${response.statusCode})',
+        'error':
+        'Server returned unexpected response (status ${response.statusCode})',
       };
     }
   }
@@ -109,8 +110,8 @@ class ApiService {
         body: jsonEncode({'email': email, 'password': password}),
       );
       final data = _decode(response);
-      if (data['token'] != null)         token    = data['token'];
-      if (data['user']?['id'] != null)   userId   = data['user']['id'];
+      if (data['token'] != null) token = data['token'];
+      if (data['user']?['id'] != null) userId = data['user']['id'];
       if (data['user']?['role'] != null) userRole = data['user']['role'];
       return data;
     } on SocketException {
@@ -134,8 +135,8 @@ class ApiService {
         body: jsonEncode({'userId': userId, 'role': role}),
       );
       final data = _decode(response);
-      if (data['role'] != null)  userRole = data['role'];
-      if (data['token'] != null) token    = data['token'];
+      if (data['role'] != null) userRole = data['role'];
+      if (data['token'] != null) token = data['token'];
       return data;
     } on SocketException {
       return {'error': 'Connection error. Check your internet.'};
@@ -185,48 +186,7 @@ class ApiService {
   // ─────────────────────────────────────────
   // FOURNISSEUR  →  /api/fournisseurs
   // ─────────────────────────────────────────
-// ─────────────────────────────────────────
-// OSRM ROUTING  →  Itinéraire camion-client
-// ─────────────────────────────────────────
 
-  /// Récupère la route OSRM entre deux points
-  static Future<Map<String, dynamic>> getRouteOSRM({
-    required double startLat,
-    required double startLng,
-    required double endLat,
-    required double endLng,
-  }) async {
-    try {
-      // Utilisez votre propre instance OSRM ou le public
-      final osrmUrl = 'http://router.project-osrm.org/route/v1/driving/'
-          '$startLng,$startLat;$endLng,$endLat'
-          '?overview=full&geometries=polyline6&steps=true';
-
-      final response = await http.get(
-        Uri.parse(osrmUrl),
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['code'] == 'Ok') {
-          return {
-            'success': true,
-            'route': data['routes'][0]['geometry'],  // encoded polyline
-            'duration': data['routes'][0]['duration'],  // secondes
-            'distance': data['routes'][0]['distance'],    // mètres
-            'legs': data['routes'][0]['legs'],
-          };
-        }
-      }
-      return {'success': false, 'error': 'OSRM error'};
-    } on SocketException {
-      return {'success': false, 'error': 'Network error'};
-    } on TimeoutException {
-      return {'success': false, 'error': 'Timeout'};
-    } catch (e) {
-      return {'success': false, 'error': e.toString()};
-    }
-  }
   static Future<Map<String, dynamic>> getMyInfo() async {
     try {
       final response = await http.get(
@@ -253,7 +213,29 @@ class ApiService {
         headers: _authHeaders,
         body: jsonEncode({
           'quantiteEau': quantiteEau,
-          'wilayas':     wilayas,
+          'wilayas': wilayas,
+        }),
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// ✅ Nouvelle méthode : modifier la quantité d’eau
+  static Future<Map<String, dynamic>> updateWaterQuantity({
+    required double quantiteEau,
+  }) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/fournisseurs/quantite-eau'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          'quantiteEau': quantiteEau,
         }),
       );
       return _decode(response);
@@ -306,32 +288,36 @@ class ApiService {
   // CHAUFFEUR  →  /api/chauffeurs
   // ─────────────────────────────────────────
 
-  /// ✅ Only nom, telephone, capaciteCamion — no prenom/adresse
-  static Future<Map<String, dynamic>> addChauffeur({
-    required String nom,
-    required prenom,
-    required String telephone,
-    required adresse,
-    required double capaciteCamion,
-
+  static Future<Map<String, dynamic>> joinGerant({
+    required String code,
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/api/chauffeurs/add'),
+        Uri.parse('$baseUrl/api/fournisseurs/join'),
         headers: _authHeaders,
-        body: jsonEncode({
-          'nom':            nom,
-          'prenom':            nom,
-          'telephone':      telephone,
-          'adresse':      telephone,
-          'capaciteCamion': capaciteCamion,
-        }),
+        body: jsonEncode({'code': code}),
       );
       return _decode(response);
     } on SocketException {
-      return {'error': 'Connection error. Check your internet.'};
+      return {'error': 'Connection error.'};
     } on TimeoutException {
-      return {'error': 'Request timed out. Try again.'};
+      return {'error': 'Request timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getGerantInfo() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/auth/me'),
+        headers: _authHeaders,
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out.'};
     } catch (e) {
       return {'error': e.toString()};
     }
@@ -340,7 +326,7 @@ class ApiService {
   static Future<List<dynamic>> getMyChauffeurs() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/api/chauffeurs/my'),
+        Uri.parse('$baseUrl/api/fournisseurs/my'),
         headers: _authHeaders,
       );
       return _decodeList(response);
@@ -370,9 +356,9 @@ class ApiService {
         headers: _authHeaders,
         body: jsonEncode({
           'capacite': capacite,
-          'prix':     prix,
-          if (lat != null)           'lat':           lat,
-          if (lon != null)           'lon':           lon,
+          'prix': prix,
+          if (lat != null) 'lat': lat,
+          if (lon != null) 'lon': lon,
           if (fournisseurId != null) 'fournisseurId': fournisseurId,
         }),
       );
@@ -421,7 +407,8 @@ class ApiService {
   static Future<List<dynamic>> getCommandes({String? status}) async {
     try {
       final uri = status != null
-          ? Uri.parse('$baseUrl/api/commandes?status=${Uri.encodeComponent(status)}')
+          ? Uri.parse(
+          '$baseUrl/api/commandes?status=${Uri.encodeComponent(status)}')
           : Uri.parse('$baseUrl/api/commandes');
       final response = await http.get(uri, headers: _authHeaders);
       return _decodeList(response);
@@ -489,7 +476,6 @@ class ApiService {
   // PYTHON AI  →  VRP NSGA-II (192.168.1.40:8000)
   // ─────────────────────────────────────────
 
-  /// Check if Python API is running
   static Future<bool> pythonHealthCheck() async {
     try {
       final res = await http.get(
@@ -501,7 +487,22 @@ class ApiService {
     }
   }
 
-  /// Send chauffeurs to Python for VRP
+  static Future<Map<String, dynamic>> deleteChauffeur(String id) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/chauffeurs/$id'),
+        headers: _authHeaders,
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
   static Future<Map<String, dynamic>> setupConducteurs({
     required List<dynamic> chauffeurs,
     required double fournisseurLat,
@@ -509,11 +510,11 @@ class ApiService {
   }) async {
     try {
       final conducteurs = chauffeurs.map((c) => {
-        'id':       (c['_id'] ?? c['id']).toString(),
-        'nom':      c['nom'] ?? '',
+        'id': (c['_id'] ?? c['id']).toString(),
+        'nom': c['nom'] ?? '',
         'capacity': (c['capaciteCamion'] as num?)?.toDouble() ?? 0.0,
-        'lat':      fournisseurLat,  // ✅ fournisseur depot position
-        'lon':      fournisseurLon,
+        'lat': fournisseurLat,
+        'lon': fournisseurLon,
       }).toList();
 
       final res = await http.post(
@@ -529,7 +530,6 @@ class ApiService {
     }
   }
 
-  /// Send a commande to Python
   static Future<Map<String, dynamic>> sendCommandeToPython({
     required String id,
     required double lat,
@@ -542,10 +542,10 @@ class ApiService {
         Uri.parse('$pythonUrl/commandes/add'),
         headers: _pythonHeaders,
         body: jsonEncode({
-          'id':          id,
-          'lat':         lat,
-          'lon':         lon,
-          'demand':      demand,
+          'id': id,
+          'lat': lat,
+          'lon': lon,
+          'demand': demand,
           'description': description,
         }),
       );
@@ -556,16 +556,32 @@ class ApiService {
       return {'error': e.toString()};
     }
   }
-
-  /// Accept a commande in Python
+  static Future<Map<String, dynamic>> addSecondaryRole() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/auth/choose-role'),
+        headers: _authHeaders,
+        body: jsonEncode({'userId': userId, 'addSecondaryRole': true}),
+      );
+      final data = _decode(response);
+      if (response.statusCode == 200) return data;
+      return {'error': data['msg'] ?? 'Error'};
+    } on SocketException {
+      return {'error': 'Connection error.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
   static Future<Map<String, dynamic>> acceptCommandePython(String id) async {
     try {
       final res = await http.post(
         Uri.parse('$pythonUrl/commandes/accept'),
         headers: _pythonHeaders,
         body: jsonEncode({
-          'commande_id': id,  // ✅ send as string (MongoDB ObjectId)
-          'action':      'accepter',
+          'commande_id': id,
+          'action': 'accepter',
         }),
       );
       return jsonDecode(res.body);
@@ -576,14 +592,13 @@ class ApiService {
     }
   }
 
-  /// Run NSGA-II optimization → returns routes per chauffeur
   static Future<Map<String, dynamic>> optimize() async {
     try {
       final res = await http.post(
         Uri.parse('$pythonUrl/optimize'),
         headers: _pythonHeaders,
         body: jsonEncode({}),
-      ).timeout(const Duration(seconds: 30)); // NSGA-II can take time
+      ).timeout(const Duration(seconds: 30));
       return jsonDecode(res.body);
     } on SocketException {
       return {'error': 'Python API unreachable. Is it running?'};
@@ -594,7 +609,6 @@ class ApiService {
     }
   }
 
-  /// Get current optimization solution
   static Future<Map<String, dynamic>> getSolution() async {
     try {
       final res = await http.get(
@@ -612,7 +626,6 @@ class ApiService {
   // NODE AI PROXY  →  /api/ai (optional)
   // ─────────────────────────────────────────
 
-  /// Optimise via Node.js proxy (if configured)
   static Future<Map<String, dynamic>> optimiseRoute(
       Map<String, dynamic> body) async {
     try {

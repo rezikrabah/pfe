@@ -191,7 +191,7 @@ class MyApp extends StatelessWidget {
           // isDark = false → themeMode: ThemeMode.light (mode clair)
           themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
 
-          home: const AnimatedSplashScreenWidget(),
+          home: const AnimatedSplashScreen(),
           routes: {
             '/Homepage': (context) => Homepage(),
             '/Login': (context) => Login(),

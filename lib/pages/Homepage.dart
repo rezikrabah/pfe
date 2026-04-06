@@ -24,12 +24,12 @@ class _HomepageState extends State<Homepage>  {
               top: 0,
               bottom: 0,
               left: 0,
-            child:  CachedNetworkImage(
-              imageUrl: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=774&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
-              fadeInDuration: Duration(milliseconds: 200),
+            child:   CachedNetworkImage(
+              imageUrl:
+              'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=774&auto=format&fit=crop&ixlib=rb-4.1.0',
               fit: BoxFit.cover,
-              placeholder: (context, url) => CircularProgressIndicator(),
-              errorWidget: (context, url, error) => const Icon(Icons.error),
+              placeholder: (_, __) => const SizedBox.shrink(),
+              errorWidget: (_, __, ___) => const SizedBox.shrink(),
             ),
           ),
         Container(
@@ -37,12 +37,22 @@ class _HomepageState extends State<Homepage>  {
           alignment: Alignment.topCenter,
           padding: EdgeInsets.only(top: 120),
            child:
-          CircleAvatar(
-          radius: 35,
-          backgroundImage:const CachedNetworkImageProvider(
-            'https://static.vecteezy.com/system/resources/previews/019/952/881/original/oil-tanker-icon-design-free-vector.jpg',
-          ),
-        )
+           Container(
+             decoration: BoxDecoration(
+               shape: BoxShape.circle,
+               boxShadow: [
+                 BoxShadow(
+                   color: const Color(0xFF4ECDC4).withOpacity(0.3),
+                   blurRadius: 20,
+                   spreadRadius: 2,
+                 ),
+               ],
+             ),
+             child: const CircleAvatar(
+               radius: 38,
+               backgroundImage: AssetImage('assets/app.png'),
+             ),
+           ),
             ),
 
             Padding(

@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
-class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({Key? key}) : super(key: key);
+class geranthistory extends StatefulWidget {
+  const geranthistory({Key? key}) : super(key: key);
 
   @override
-  State<HistoryScreen> createState() => _HistoryScreenState();
+  State<geranthistory> createState() => _geranthistoryState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
+class _geranthistoryState extends State<geranthistory> {
   String selectedPeriod = 'Jour';
 
   // Données simulées - À remplacer par de vraies données du backend
@@ -35,7 +35,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       'id': '1',
       'date': 'Aujourd\'hui',
       'time': '14:30',
-
+      'chauffeur':' rezik rabah',
       'from': 'Hydra',
       'to': 'Bab Ezzouar',
       'quantity': 2000,
@@ -46,6 +46,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       'id': '2',
       'date': 'Aujourd\'hui',
       'time': '11:15',
+      'chauffeur':'ramzy',
       'from': 'Centre-ville',
       'to': 'Kouba',
       'quantity': 1500,
@@ -56,7 +57,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       'id': '3',
       'date': 'Aujourd\'hui',
       'time': '09:00',
-
+      'chauffeur':'rafik',
       'from': 'Alger Centre',
       'to': 'Rouiba',
       'quantity': 2500,
@@ -67,7 +68,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       'id': '4',
       'date': 'Hier',
       'time': '16:45',
-
+      'chauffeur':'wabel',
       'from': 'Birkhadem',
       'to': 'El Biar',
       'quantity': 3000,
@@ -78,6 +79,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       'id': '5',
       'date': 'Hier',
       'time': '13:20',
+      'chauffeur':'rezik rabah',
       'from': 'Ain Benian',
       'to': 'Cheraga',
       'quantity': 1800,
@@ -471,6 +473,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.person,
+                        size: 16,
+                        color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                    const SizedBox(width: 4),
+                    Text(
+                      delivery['chauffeur'] ?? 'Chauffeur inconnu',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
                 Row(
                   children: [
                     Icon(Icons.location_on,

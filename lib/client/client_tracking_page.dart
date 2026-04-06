@@ -48,7 +48,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     _fetchTracking();
     // Rafraîchissement toutes les 10 secondes
     _timer = Timer.periodic(
-      const Duration(seconds: 10),
+      const Duration(seconds: 30),
           (_) => _fetchTracking(),
     );
   }
