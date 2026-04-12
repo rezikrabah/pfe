@@ -15,9 +15,11 @@ class clientpage extends StatefulWidget {
 }
 
 class _clientpageState extends State<clientpage> {
-  // ── Active commande ID loaded from API ──
   String? _activeCommandeId;
-  bool _loadingCommande = true;
+  String  _activeClientNom   = '';
+  double  _activeVolumeLivre = 0.0;
+  String  _activeAdresse     = '';
+  bool    _loadingCommande   = true;
 
   @override
   void initState() {
@@ -37,8 +39,16 @@ class _clientpageState extends State<clientpage> {
         orElse: () => {},
       );
       if (active.isNotEmpty && mounted) {
+        final clientInfo = await ApiService.getClientInfo();
+        final clientNom =
+        '${clientInfo['prenom'] ?? ''} ${clientInfo['nom'] ?? ''}'.trim();
+
         setState(() {
-          _activeCommandeId = (active['_id'] ?? active['id']).toString();
+          _activeCommandeId  = (active['_id'] ?? active['id']).toString();
+          _activeClientNom   = clientNom.isNotEmpty ? clientNom : 'Client';
+          _activeVolumeLivre = (active['capacite'] as num?)?.toDouble() ?? 0.0;
+          _activeAdresse     = active['adresse']?.toString() ??
+              '${active['lat'] ?? ''}, ${active['lon'] ?? ''}';
         });
       }
     } catch (e) {
@@ -91,7 +101,7 @@ class _clientpageState extends State<clientpage> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth  = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
@@ -135,9 +145,9 @@ class _clientpageState extends State<clientpage> {
 
       body: SingleChildScrollView(
         padding: EdgeInsets.only(
-          top: screenHeight * 0.03,
-          left: screenWidth * 0.04,
-          right: screenWidth * 0.04,
+          top:   screenHeight * 0.03,
+          left:  screenWidth  * 0.04,
+          right: screenWidth  * 0.04,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -146,8 +156,8 @@ class _clientpageState extends State<clientpage> {
             // ---- Profile Card ----
             Container(
               padding: EdgeInsets.symmetric(
-                horizontal: screenWidth * 0.04,
-                vertical: screenHeight * 0.015,
+                horizontal: screenWidth  * 0.04,
+                vertical:   screenHeight * 0.015,
               ),
               decoration: BoxDecoration(
                 color: const Color(0xFF0B3C49),
@@ -192,24 +202,23 @@ class _clientpageState extends State<clientpage> {
             Row(
               children: [
                 roleCard(
-                  icon: Icons.local_shipping_sharp,
+                  icon:  Icons.local_shipping_sharp,
                   title: "  12\n commande",
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => clientpage()),
-                    );
+                    Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => clientpage()));
                   },
                 ),
                 roleCard(
-                  icon: Icons.water_drop_rounded,
+                  icon:  Icons.water_drop_rounded,
                   title: "1100L",
                   onTap: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => commandes(
-                          clientId: int.tryParse(ApiService.userId ?? '0') ?? 0,
+                        builder: (_) => commandes(
+                          clientId:
+                          int.tryParse(ApiService.userId ?? '0') ?? 0,
                         ),
                       ),
                     );
@@ -231,8 +240,6 @@ class _clientpageState extends State<clientpage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-
-                  // Header
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -246,10 +253,8 @@ class _clientpageState extends State<clientpage> {
                       ),
                       TextButton(
                         onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => historique()),
-                          );
+                          Navigator.push(context,
+                              MaterialPageRoute(builder: (_) => historique()));
                         },
                         child: const Text(
                           'voir tout ->',
@@ -258,13 +263,14 @@ class _clientpageState extends State<clientpage> {
                       ),
                     ],
                   ),
-
-                  // Order rows
-                  _orderRow('1 citerne x500L', '25 Décembre 2024', 'Livrée ✓', Colors.green, screenWidth),
+                  _orderRow('1 citerne x500L', '25 Décembre 2024',
+                      'Livrée ✓', Colors.green, screenWidth),
                   SizedBox(height: screenHeight * 0.01),
-                  _orderRow('1 citerne x400L', '02 Janvier 2025', 'Livrée ✓', Colors.green, screenWidth),
+                  _orderRow('1 citerne x400L', '02 Janvier 2025',
+                      'Livrée ✓', Colors.green, screenWidth),
                   SizedBox(height: screenHeight * 0.01),
-                  _orderRow('1 citerne x200L', '25 Janvier 2026', 'en cours...', Colors.orangeAccent, screenWidth),
+                  _orderRow('1 citerne x200L', '25 Janvier 2026',
+                      'en cours...', Colors.orangeAccent, screenWidth),
                 ],
               ),
             ),
@@ -289,12 +295,9 @@ class _clientpageState extends State<clientpage> {
               ),
               child: _loadingCommande
                   ? const SizedBox(
-                width: 20,
-                height: 20,
+                width: 20, height: 20,
                 child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2,
-                ),
+                    color: Colors.white, strokeWidth: 2),
               )
                   : TextButton(
                 onPressed: _activeCommandeId == null
@@ -303,9 +306,12 @@ class _clientpageState extends State<clientpage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => ClientTrackingPage(
-                        commandeId: _activeCommandeId!,
-                        clientId: ApiService.userId ?? '0',
+                      builder: (_) => ClientTrackingPage(
+                        commandeId:  _activeCommandeId!,
+                        clientId:    ApiService.userId ?? '0',
+                        clientNom:   _activeClientNom,
+                        volumeLivre: _activeVolumeLivre,
+                        adresse:     _activeAdresse,
                       ),
                     ),
                   );
@@ -337,10 +343,8 @@ class _clientpageState extends State<clientpage> {
         shape: const CircleBorder(),
         child: const Icon(CupertinoIcons.home, color: Colors.white, size: 20),
         onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => clientpage()),
-          );
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => clientpage()));
         },
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
@@ -353,7 +357,8 @@ class _clientpageState extends State<clientpage> {
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _navItem(CupertinoIcons.map, 'suivi', () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => suivi()));
+              Navigator.push(
+                  context, MaterialPageRoute(builder: (_) => suivi()));
             }),
             const SizedBox(width: 35),
             _navItem(CupertinoIcons.cube_box_fill, 'commandes', () {
@@ -368,11 +373,13 @@ class _clientpageState extends State<clientpage> {
             }),
             const SizedBox(width: 25),
             _navItem(CupertinoIcons.clock, 'historique', () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => historique()));
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => historique()));
             }),
             const SizedBox(width: 22),
             _navItem(CupertinoIcons.profile_circled, 'profile', () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => profile()));
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => profile()));
             }),
           ],
         ),
@@ -380,11 +387,12 @@ class _clientpageState extends State<clientpage> {
     );
   }
 
-  // ---- Helper: Order Row ----
-  Widget _orderRow(String title, String date, String status, Color statusColor, double screenWidth) {
+  Widget _orderRow(String title, String date, String status,
+      Color statusColor, double screenWidth) {
     return Row(
       children: [
-        const Icon(Icons.local_shipping_sharp, color: Color(0xFF4ECDC4), size: 28),
+        const Icon(Icons.local_shipping_sharp,
+            color: Color(0xFF4ECDC4), size: 28),
         SizedBox(width: screenWidth * 0.02),
         Expanded(
           child: RichText(
@@ -417,7 +425,6 @@ class _clientpageState extends State<clientpage> {
     );
   }
 
-  // ---- Helper: Nav Item ----
   Widget _navItem(IconData icon, String label, VoidCallback onTap) {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -429,10 +436,9 @@ class _clientpageState extends State<clientpage> {
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
         ),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 8, color: Color(0xFF0B3C49)),
-        ),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 8, color: Color(0xFF0B3C49))),
       ],
     );
   }

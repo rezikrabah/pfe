@@ -4,17 +4,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
+import '../fournisseur/chauffeur_review_screen.dart';
 import '../services/api_service.dart';
 import '../services/osrmservice.dart';
 
 class ClientTrackingPage extends StatefulWidget {
   final String commandeId;
   final String clientId;
+  final String? chauffeurId;
+
+  // Pass these from the parent screen when navigating to this page
+  final String clientNom;
+  final double volumeLivre;
+  final String adresse;
 
   const ClientTrackingPage({
     super.key,
     required this.commandeId,
     required this.clientId,
+    required this.clientNom,
+    required this.volumeLivre,
+    required this.adresse,
+    this.chauffeurId,
   });
 
   @override
@@ -34,16 +45,20 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   double?   _durationMin;
   String?   _driverName;
   String?   _driverPhone;
+  String?   _chauffeurId;
   DateTime? _lastDriverUpdate;
-  bool    _loading = true;
-  String? _error;
+  bool      _loading = true;
+  String?   _error;
+
+  bool _ratingNavigated = false;
 
   @override
   void initState() {
     super.initState();
+    _chauffeurId = widget.chauffeurId;
     _fetchTracking();
     _timer = Timer.periodic(
-      const Duration(seconds: 60),
+      const Duration(seconds: 5),
           (_) => _fetchTracking(),
     );
   }
@@ -57,19 +72,22 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
 
   Future<void> _fetchTracking() async {
     try {
+
       final res = await http.get(
-        Uri.parse('${ApiService.baseUrl}/api/commandes/${widget.commandeId}/track'),
+        Uri.parse(
+            '${ApiService.baseUrl}/api/commandes/${widget.commandeId}/track'),
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type':  'application/json',
           'Authorization': 'Bearer ${ApiService.token}',
         },
+
       );
 
       if (res.statusCode == 404) {
         await _fetchCommandeStatus();
         return;
       }
-
+      debugPrint('>>> tracking data: ${res.body}');
       if (res.statusCode != 200) {
         if (mounted) {
           setState(() {
@@ -88,11 +106,18 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   }
 
   Future<void> _fetchCommandeStatus() async {
+
     try {
+
       final commandes = await ApiService.getMyCommandes();
       final commande  = commandes.firstWhere(
             (c) => (c['_id'] ?? c['id']).toString() == widget.commandeId,
         orElse: () => {},
+      );
+
+      debugPrint('>>> commande status: ${commande}');    // in _fetchCommandeStatus
+      final normalized = _normalizeStatus(
+          commande['status'] ?? commande['statut'] ?? 'en attente'
       );
 
       if (!mounted) return;
@@ -104,9 +129,9 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
           _loading = false;
           _error   = null;
         });
-        // Stop polling if final status
         if (normalized == 'refusee' || normalized == 'livree') {
           _timer?.cancel();
+          if (normalized == 'livree') _navigateToRating();
         }
       } else {
         setState(() { _loading = false; _statut = 'en_attente'; });
@@ -115,10 +140,11 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       if (!mounted) return;
       setState(() { _error = 'Connexion impossible'; _loading = false; });
     }
+
   }
 
   Future<void> _applyTrackingData(Map<String, dynamic> data) async {
-    final rawStatus = (data['statut'] ?? 'en attente').toString();
+    final rawStatus = (data['statut'] ?? data['status'] ?? 'en attente').toString();
     final statut    = _normalizeStatus(rawStatus);
 
     LatLng? driverPos;
@@ -147,7 +173,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
 
     if (driverPos != null && destination != null) {
       try {
-        final result = await OsrmService.getRouteWithMetrics(driverPos, destination);
+        final result =
+        await OsrmService.getRouteWithMetrics(driverPos, destination);
         routePoints = result['points']      as List<LatLng>;
         distanceKm  = result['distanceKm']  as double?;
         durationMin = result['durationMin'] as double?;
@@ -162,11 +189,15 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     final fournisseur = data['fournisseur'];
 
     if (chauffeur != null && chauffeur['nom'] != null) {
-      driverName  = chauffeur['nom'];
-      driverPhone = chauffeur['telephone'];
+      driverName   = chauffeur['nom'];
+      driverPhone  = chauffeur['telephone'];
+      _chauffeurId = (chauffeur['_id'] ?? chauffeur['id'])?.toString();
     } else if (fournisseur != null) {
-      driverName = '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'.trim();
+      driverName = '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'
+          .trim();
       if (driverName!.isEmpty) driverName = null;
+      _chauffeurId ??=
+          (fournisseur['_id'] ?? fournisseur['id'])?.toString();
     }
 
     if (!mounted) return;
@@ -184,9 +215,10 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       _driverPhone  = driverPhone;
     });
 
-    // Stop polling if final status
     if (statut == 'refusee' || statut == 'livree') {
       _timer?.cancel();
+      if (statut == 'livree') _navigateToRating();
+      return;
     }
 
     if (driverPos != null && destination != null && routePoints.length > 1) {
@@ -200,17 +232,90 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     }
   }
 
+  void _navigateToRating() {
+    if (_ratingNavigated || !mounted) return;
+    _ratingNavigated = true;
+
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(children: [
+            Icon(Icons.check_circle, color: Colors.green, size: 32),
+            SizedBox(width: 12),
+            Text('Livraison effectuée !',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ]),
+          content: const Text(
+            'Votre commande a été livrée avec succès.\nVoulez-vous évaluer le livreur ?',
+            style: TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pop(context);
+              },
+              child: const Text('Plus tard',
+                  style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ChauffeurReviewScreen(
+                      commandeId:  widget.commandeId,
+                      clientNom:   widget.clientNom,
+                      volumeLivre: widget.volumeLivre,
+                      adresse:     widget.adresse,
+                    ),
+                  ),
+                );
+              },
+              icon:  const Icon(Icons.star),
+              label: const Text('Évaluer'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0B3C49),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
   String _normalizeStatus(String status) {
     switch (status.trim().toLowerCase()) {
-      case 'en attente':   return 'en_attente';
-      case 'en livraison': return 'assignee';
+      case 'en attente':
+      case 'pending':        return 'en_attente';
+      case 'acceptee':
+      case 'acceptée':
+      case 'accepted':       return 'acceptee';
+      case 'en livraison':
+      case 'assigned':
+      case 'assignee':
+      case 'assignée':       return 'assignee';
       case 'livrée':
-      case 'livree':       return 'livree';
+      case 'livree':
+      case 'delivered':
+      case 'livré':          return 'livree';
       case 'annulée':
       case 'annulee':
+      case 'cancelled':
       case 'refusee':
-      case 'refusée':      return 'refusee';
-      default:             return 'en_attente';
+      case 'refusée':
+      case 'refused':        return 'refusee';
+      default:               return 'en_attente';
     }
   }
 
@@ -244,7 +349,6 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     return 'Il y a ${diff.inHours} h';
   }
 
-  // ── Final status screen (refused or delivered) ────────────────
   Widget _buildFinalScreen() {
     final isDelivered = _statut == 'livree';
     return Center(
@@ -254,15 +358,15 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 120,
-              height: 120,
+              width: 120, height: 120,
               decoration: BoxDecoration(
-                color: (isDelivered ? Colors.green : Colors.red).withOpacity(0.1),
+                color: (isDelivered ? Colors.green : Colors.red)
+                    .withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 isDelivered ? Icons.check_circle : Icons.cancel,
-                size: 80,
+                size:  80,
                 color: isDelivered ? Colors.green : Colors.red,
               ),
             ),
@@ -271,7 +375,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
               _statusLabel,
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 22,
+                fontSize:   22,
                 fontWeight: FontWeight.bold,
                 color: isDelivered ? Colors.green : Colors.red,
               ),
@@ -282,23 +386,47 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   ? 'Votre commande a été livrée avec succès.'
                   : 'Votre commande a été refusée par le fournisseur.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 15,
-                color: Colors.grey.shade600,
-              ),
+              style: TextStyle(fontSize: 15, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 32),
+            if (isDelivered)
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ChauffeurReviewScreen(
+                        commandeId:  widget.commandeId,
+                        clientNom:   widget.clientNom,
+                        volumeLivre: widget.volumeLivre,
+                        adresse:     widget.adresse,
+                      ),
+                    ),
+                  );
+                },
+                icon:  const Icon(Icons.star),
+                label: const Text('Évaluer le livreur'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.amber,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 32, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            const SizedBox(height: 12),
             ElevatedButton.icon(
               onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back),
+              icon:  const Icon(Icons.arrow_back),
               label: const Text('Retour'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0B3C49),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 32, vertical: 14),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],
@@ -322,7 +450,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon:      const Icon(Icons.refresh),
             onPressed: _fetchTracking,
           ),
         ],
@@ -347,7 +475,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
               TileLayer(
                 urlTemplate:
                 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.yourname.waterdelivery',
+                userAgentPackageName:
+                'com.yourname.waterdelivery',
               ),
               if (_routePoints.length > 1)
                 PolylineLayer(
@@ -372,7 +501,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                         decoration: BoxDecoration(
                           color:  Colors.red,
                           shape:  BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
+                          border: Border.all(
+                              color: Colors.white, width: 3),
                           boxShadow: const [
                             BoxShadow(
                               color:      Colors.black26,
@@ -402,9 +532,9 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
 
           // ── Status card ───────────────────────────
           Positioned(
-            top: screenHeight * 0.02,
-            left: screenWidth * 0.04,
-            right: screenWidth * 0.04,
+            top:   screenHeight * 0.02,
+            left:  screenWidth  * 0.04,
+            right: screenWidth  * 0.04,
             child: Card(
               elevation: 8,
               shape: RoundedRectangleBorder(
@@ -412,7 +542,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
               child: Padding(
                 padding: EdgeInsets.all(screenWidth * 0.04),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize:     MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
 
@@ -432,7 +562,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                           _statusLabel,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            fontSize: screenWidth * 0.035,
+                            fontSize:   screenWidth * 0.035,
                           ),
                         ),
                       ),
@@ -461,7 +591,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                         SizedBox(width: screenWidth * 0.03),
                         Expanded(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
                             children: [
                               Text(
                                 _driverName!,
@@ -474,7 +605,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                                 Text(
                                   _driverPhone!,
                                   style: TextStyle(
-                                    color: Colors.grey.shade600,
+                                    color:    Colors.grey.shade600,
                                     fontSize: screenWidth * 0.03,
                                   ),
                                 ),
@@ -492,36 +623,45 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                     ],
 
                     // Distance & duration
-                    if (_distanceKm != null && _durationMin != null) ...[
+                    if (_distanceKm != null &&
+                        _durationMin != null) ...[
                       SizedBox(height: screenHeight * 0.015),
                       const Divider(height: 1),
                       SizedBox(height: screenHeight * 0.015),
                       Row(children: [
                         Expanded(
                           child: _buildMetricTile(
-                            icon:  Icons.route,
-                            value: '${_distanceKm!.toStringAsFixed(1)} km',
-                            label: 'Distance',
+                            icon:        Icons.route,
+                            value:
+                            '${_distanceKm!.toStringAsFixed(1)} km',
+                            label:       'Distance',
                             screenWidth: screenWidth,
                           ),
                         ),
-                        Container(height: 30, width: 1, color: Colors.grey.shade300),
+                        Container(
+                            height: 30,
+                            width:  1,
+                            color:  Colors.grey.shade300),
                         Expanded(
                           child: _buildMetricTile(
-                            icon:  Icons.access_time,
-                            value: '${_durationMin!.round()} min',
-                            label: 'Temps estimé',
+                            icon:        Icons.access_time,
+                            value:
+                            '${_durationMin!.round()} min',
+                            label:       'Temps estimé',
                             screenWidth: screenWidth,
                           ),
                         ),
                         if (_getLastUpdateText() != null) ...[
-                          Container(height: 30, width: 1, color: Colors.grey.shade300),
+                          Container(
+                              height: 30,
+                              width:  1,
+                              color:  Colors.grey.shade300),
                           Expanded(
                             child: _buildMetricTile(
-                              icon:      Icons.update,
-                              value:     _getLastUpdateText()!,
-                              label:     'Mise à jour',
-                              iconColor: Colors.orange,
+                              icon:        Icons.update,
+                              value:       _getLastUpdateText()!,
+                              label:       'Mise à jour',
+                              iconColor:   Colors.orange,
                               screenWidth: screenWidth,
                             ),
                           ),
@@ -545,20 +685,22 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   color:        Colors.white,
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
-                    BoxShadow(color: Colors.black12, blurRadius: 12)
+                    BoxShadow(
+                        color: Colors.black12, blurRadius: 12)
                   ],
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.hourglass_top,
-                        size: screenWidth * 0.13,
+                        size:  screenWidth * 0.13,
                         color: _statusColor),
                     SizedBox(height: screenHeight * 0.015),
                     Text(
                       'En attente d\'acceptation\npar le fournisseur',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: screenWidth * 0.038),
+                      style: TextStyle(
+                          fontSize: screenWidth * 0.038),
                     ),
                   ],
                 ),
@@ -569,26 +711,28 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
           if (_statut == 'assignee' && _driverPos == null)
             Positioned(
               bottom: screenHeight * 0.22,
-              left: screenWidth * 0.04,
-              right: screenWidth * 0.04,
+              left:   screenWidth  * 0.04,
+              right:  screenWidth  * 0.04,
               child: Container(
                 padding: EdgeInsets.all(screenWidth * 0.04),
                 decoration: BoxDecoration(
                   color:        Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: const [
-                    BoxShadow(color: Colors.black12, blurRadius: 8)
+                    BoxShadow(
+                        color: Colors.black12, blurRadius: 8)
                   ],
                 ),
                 child: Row(children: [
                   Icon(Icons.local_shipping,
                       color: const Color(0xFF9C27B0),
-                      size: screenWidth * 0.06),
+                      size:  screenWidth * 0.06),
                   SizedBox(width: screenWidth * 0.03),
                   Expanded(
                     child: Text(
                       'Votre commande est en livraison.\nLocalisation du livreur en cours...',
-                      style: TextStyle(fontSize: screenWidth * 0.033),
+                      style:
+                      TextStyle(fontSize: screenWidth * 0.033),
                     ),
                   ),
                   SizedBox(
@@ -605,7 +749,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
           // ── Control FABs ──────────────────────────
           Positioned(
             bottom: screenHeight * 0.12,
-            right: screenWidth * 0.04,
+            right:  screenWidth  * 0.04,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -613,10 +757,11 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   FloatingActionButton.small(
                     heroTag:         'center_driver',
                     backgroundColor: Colors.white,
-                    onPressed: () => _mapController.move(_driverPos!, 16),
+                    onPressed: () =>
+                        _mapController.move(_driverPos!, 16),
                     child: Icon(Icons.local_shipping,
                         color: Colors.red,
-                        size: screenWidth * 0.05),
+                        size:  screenWidth * 0.05),
                   ),
                 if (_driverPos != null)
                   SizedBox(height: screenHeight * 0.01),
@@ -624,10 +769,11 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   FloatingActionButton.small(
                     heroTag:         'center_dest',
                     backgroundColor: Colors.white,
-                    onPressed: () => _mapController.move(_destination!, 16),
+                    onPressed: () =>
+                        _mapController.move(_destination!, 16),
                     child: Icon(Icons.location_on,
                         color: Colors.green,
-                        size: screenWidth * 0.05),
+                        size:  screenWidth * 0.05),
                   ),
                 if (_destination != null)
                   SizedBox(height: screenHeight * 0.01),
@@ -635,7 +781,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   heroTag:         'fit_bounds',
                   backgroundColor: const Color(0xFF0B3C49),
                   onPressed: () {
-                    if (_driverPos != null && _destination != null) {
+                    if (_driverPos != null &&
+                        _destination != null) {
                       final bounds = LatLngBounds.fromPoints(
                           [_driverPos!, _destination!]);
                       _mapController.fitBounds(bounds,
@@ -656,8 +803,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
           if (_error != null)
             Positioned(
               bottom: screenHeight * 0.025,
-              left: screenWidth * 0.04,
-              right: screenWidth * 0.04,
+              left:   screenWidth  * 0.04,
+              right:  screenWidth  * 0.04,
               child: Container(
                 padding: EdgeInsets.all(screenWidth * 0.03),
                 decoration: BoxDecoration(
@@ -667,13 +814,13 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                 child: Row(children: [
                   Icon(Icons.wifi_off,
                       color: Colors.deepOrange,
-                      size: screenWidth * 0.045),
+                      size:  screenWidth * 0.045),
                   SizedBox(width: screenWidth * 0.02),
                   Expanded(
                     child: Text(
                       _error!,
                       style: TextStyle(
-                        color: Colors.deepOrange,
+                        color:    Colors.deepOrange,
                         fontSize: screenWidth * 0.033,
                       ),
                     ),
@@ -681,7 +828,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   TextButton(
                     onPressed: _fetchTracking,
                     child: Text('Réessayer',
-                        style: TextStyle(fontSize: screenWidth * 0.03)),
+                        style: TextStyle(
+                            fontSize: screenWidth * 0.03)),
                   ),
                 ]),
               ),
@@ -702,7 +850,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(icon,
-            size: screenWidth * 0.04,
+            size:  screenWidth * 0.04,
             color: iconColor ?? Colors.grey.shade600),
         SizedBox(width: screenWidth * 0.015),
         Column(
@@ -711,11 +859,11 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
             Text(value,
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  fontSize: screenWidth * 0.033,
+                  fontSize:   screenWidth * 0.033,
                 )),
             Text(label,
                 style: TextStyle(
-                  color: Colors.grey.shade600,
+                  color:    Colors.grey.shade600,
                   fontSize: screenWidth * 0.025,
                 )),
           ],

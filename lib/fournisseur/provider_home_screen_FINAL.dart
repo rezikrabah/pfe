@@ -5,12 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+
 import 'orders_screen.dart';
 import 'history_screen.dart';
 import 'profile_screen.dart';
 import '../services/api_service.dart';
 import '../services/osrmservice.dart';
-
 
 class ProviderHomeScreen extends StatefulWidget {
   final bool    isGerant;
@@ -67,27 +67,21 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   // SIMULATION STATE
   // ─────────────────────────────────────────────────────────
 
-  /// All polyline points of the full route (set after building the route).
   List<LatLng> _fullRoutePoints = [];
-
-  /// Current simulated position index along [_fullRoutePoints].
-  int _simIndex = 0;
-
-  /// Whether the simulation is currently running.
+  int  _simIndex   = 0;
   bool _simRunning = false;
-
-  /// Whether the simulation has been started at all (paused or running).
   bool _simStarted = false;
-
-  /// Simulated truck position shown on the map.
   LatLng? _simPosition;
 
-  /// Speed of simulation: points advanced per timer tick.
-  /// Each OSRM polyline point is ~10–30 m apart; 3 pts/tick at 100 ms ≈ ~40–90 km/h visual.
-  static const int _simStepSize  = 1;
+  static const int      _simStepSize = 3;
   static const Duration _simInterval = Duration(milliseconds: 100);
 
   Timer? _simTimer;
+
+  int  _currentStopTarget    = 0;
+  bool _arrivalDialogShowing = false;
+  int  _simUploadCounter     = 0;
+  static const int _uploadEveryNTicks = 10;
 
   // ─────────────────────────────────────────────────────────
   // INIT / DISPOSE
@@ -127,7 +121,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       if (testOrders != null && testOrders.isNotEmpty) {
         _testOrders = List<Map<String, dynamic>>.from(testOrders);
       }
-
     });
     if (!isOnline) {
       setState(() => isOnline = true);
@@ -162,58 +155,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       _showSnack('GPS non disponible', Colors.orange);
     }
   }
-
-  void _showError(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), backgroundColor: Colors.red));
-  }
-
-  Future<void> _refuseOrder(String orderId) async {
-    if (orderId.startsWith('test_')) {
-      setState(() {
-        final idx = _testOrders.indexWhere((o) => o['id'] == orderId);
-        if (idx != -1) _testOrders[idx]['status'] = 'refused';
-        _optimizedStops.removeWhere((s) => s.mongoId == orderId);
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('[TEST] Commande refusée'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 2),
-        ));
-      }
-      return;
-    }
-
-    try {
-      final result = await ApiService.cancelCommande(orderId);
-      final errorMsg = result['error'] ??
-          (result['msg'] != null &&
-              result['msg'] != 'Commande annulée avec succès'
-              ? result['msg']
-              : null);
-
-      if (errorMsg != null) { _showError(errorMsg); return; }
-
-      setState(() {
-        final idx = _testOrders.indexWhere((o) => o['id'] == orderId);
-        if (idx != -1) _testOrders[idx]['status'] = 'refused';
-        _optimizedStops.removeWhere((s) => s.mongoId == orderId);
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Commande refusée'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 2),
-        ));
-      }
-    } catch (e) {
-      _showError('Erreur réseau: $e');
-    }
-  }
-
 
   Future<void> _startGps() async {
     try {
@@ -295,9 +236,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   // ─────────────────────────────────────────────────────────
   // SIMULATION CONTROLS
   // ─────────────────────────────────────────────────────────
-// After OSRM returns the road geometry, all points are stored in _fullRoutePoints:
-  /// Start or resume the simulation.
-  void _startSimulation() {
+
+  void _startSimulation({bool resume = false}) {
     if (_fullRoutePoints.isEmpty) {
       _showSnack('Aucun itinéraire disponible pour la simulation', Colors.orange);
       return;
@@ -305,16 +245,19 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     setState(() {
       _simRunning = true;
       _simStarted = true;
-      // If starting fresh, begin from the first point.
-      if (_simIndex >= _fullRoutePoints.length) _simIndex = 0;
-      if (_simPosition == null) _simPosition = _fullRoutePoints.first;
+      if (!resume) {
+        // Only reset on fresh start
+        _simIndex          = 0;
+        _simPosition       = _fullRoutePoints.first;
+        _currentStopTarget = 0;
+      }
     });
 
     _simTimer?.cancel();
-    _simTimer = Timer.periodic(_simInterval, (_) {
+    _simTimer = Timer.periodic(_simInterval, (_) async {
       if (!mounted) { _simTimer?.cancel(); return; }
+
       if (_simIndex >= _fullRoutePoints.length - 1) {
-        // Reached the end
         _simTimer?.cancel();
         setState(() {
           _simRunning  = false;
@@ -323,37 +266,181 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         _showSnack('Simulation terminée ✓', Colors.green);
         return;
       }
+
       setState(() {
         _simIndex    = (_simIndex + _simStepSize)
             .clamp(0, _fullRoutePoints.length - 1);
         _simPosition = _fullRoutePoints[_simIndex];
       });
-      // Keep map centred on the moving truck
+
+      _simUploadCounter++;
+      if (_simUploadCounter >= _uploadEveryNTicks) {
+        _simUploadCounter = 0;
+        ApiService.updatePosition(
+          lat: _simPosition!.latitude,
+          lon: _simPosition!.longitude,
+        );
+      }
+
+      if (!_arrivalDialogShowing &&
+          _currentStopTarget < _optimizedStops.length) {
+        final stop = _optimizedStops[_currentStopTarget];
+        final dist = _haversineKmStatic(
+          _simPosition!.latitude,  _simPosition!.longitude,
+          stop.position.latitude,  stop.position.longitude,
+        ) * 1000;
+
+        if (dist < 50) {
+          _arrivalDialogShowing = true;
+          _simTimer?.cancel();   // pause by cancelling timer directly
+          await _showDeliveryCompletionDialog(stop);
+        }
+      }
     });
   }
+  Future<void> _showDeliveryCompletionDialog(_RouteStop stop) async {
+    final priceController = TextEditingController(
+      text: stop.quantity > 0 ? stop.quantity.toStringAsFixed(0) : '',
+    );
 
-  /// Pause the simulation (keeps current index).
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.location_on, color: Colors.green, size: 28),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Arrivée chez le client',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                Text(stop.clientName,
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+              ],
+            ),
+          ),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (stop.address.isNotEmpty) ...[
+              Row(children: [
+                Icon(Icons.place, size: 16, color: Colors.grey.shade500),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(stop.address,
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.grey.shade600)),
+                ),
+              ]),
+              const SizedBox(height: 16),
+            ],
+            const Text('Montant à encaisser (DA)',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            const SizedBox(height: 8),
+            TextField(
+              controller:   priceController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                prefixIcon:  const Icon(Icons.payments_outlined),
+                hintText:    'Ex: 1500',
+                suffixText:  'DA',
+                filled:      true,
+                fillColor:   Colors.grey.shade50,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon:  const Icon(Icons.check_circle_outline),
+            label: const Text('Confirmer la livraison'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        await ApiService.updateCommandeStatus(
+          commandeId: stop.mongoId,
+          status:     'livrée',
+          prix:       double.tryParse(
+              priceController.text.replaceAll(',', '.')),
+        );
+        _showSnack('Livraison confirmée ✓', Colors.green);
+
+        setState(() {
+          _currentStopTarget++;
+          _arrivalDialogShowing = false;
+        });
+
+        if (_currentStopTarget < _optimizedStops.length) {
+          _startSimulation(resume: true);  // ← resume, don't restart
+        } else {
+          _showSnack('Toutes les livraisons sont terminées ', Colors.green);
+        }
+      } catch (e) {
+        _showSnack('Erreur lors de la confirmation', Colors.red);
+        setState(() => _arrivalDialogShowing = false);
+        _startSimulation(resume: true);  // ← resume on error too
+      }
+    } else {
+      setState(() => _arrivalDialogShowing = false);
+      _startSimulation(resume: true);  // ← resume on cancel
+    }
+
+    priceController.dispose();
+  }
+
   void _pauseSimulation() {
     _simTimer?.cancel();
     setState(() => _simRunning = false);
   }
 
-  /// Stop and reset the simulation.
   void _stopSimulation() {
     _simTimer?.cancel();
     setState(() {
-      _simRunning  = false;
-      _simStarted  = false;
-      _simIndex    = 0;
-      _simPosition = null;
+      _simRunning           = false;
+      _simStarted           = false;
+      _simIndex             = 0;
+      _simPosition          = null;
+      _currentStopTarget    = 0;
+      _arrivalDialogShowing = false;
+      _simUploadCounter     = 0;
     });
   }
 
   // ─────────────────────────────────────────────────────────
-  // CORE: decide whether to use test data or real API
+  // CORE: decide test data vs real API
   // ─────────────────────────────────────────────────────────
   Future<void> _loadOptimizedRoutes() async {
-    // Reset simulation whenever route is reloaded
     _stopSimulation();
     if (_testOrders.isNotEmpty) {
       await _buildRouteFromTestOrders();
@@ -363,8 +450,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   }
 
   // ─────────────────────────────────────────────────────────
-  // Nearest-neighbour greedy sort
-  // ─────────────────────────────────────────────────────────
+  // NEAREST-NEIGHBOUR GREEDY SORT
+  //
+  // Works on any list that has 'lat' and 'lon' keys.
+  // For test orders those keys are set directly.
+  // For real orders, pass a flat list built from position.lat/lon
+  // (see _loadOptimizedRoutesFromApi fallback below).
+  //
   List<Map<String, dynamic>> _nearestNeighbourSort(
       LatLng startPosition,
       List<Map<String, dynamic>> orders,
@@ -409,8 +501,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     final dlon = (lon2 - lon1) * pi / 180.0;
     final sinD = _dartSin(dlat / 2);
     final sinL = _dartSin(dlon / 2);
-    final a = sinD * sinD +
-        _dartCos(lat1 * pi / 180.0) * _dartCos(lat2 * pi / 180.0) * sinL * sinL;
+    final a    = sinD * sinD +
+        _dartCos(lat1 * pi / 180.0) *
+            _dartCos(lat2 * pi / 180.0) *
+            sinL * sinL;
     return r * 2 * _dartAsin(_dartSqrt(a < 0 ? 0 : a));
   }
 
@@ -420,7 +514,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   static double _dartSqrt(double x) => dartMath.sqrt(x);
 
   // ─────────────────────────────────────────────────────────
-  // TEST MODE: build route using nearest-neighbour order
+  // TEST MODE: nearest-neighbour on local test orders
   // ─────────────────────────────────────────────────────────
   Future<void> _buildRouteFromTestOrders() async {
     setState(() => _loadingRoutes = true);
@@ -433,6 +527,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       final rawOrders =
       acceptedOrders.isNotEmpty ? acceptedOrders : _testOrders;
 
+      // Test orders have flat 'lat'/'lon' — sort works directly
       final ordersToRoute = _nearestNeighbourSort(_currentPosition, rawOrders);
 
       final List<LatLng>     waypoints = [_currentPosition];
@@ -455,7 +550,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ));
       }
 
-      // OSRM segments
       final List<LatLng> fullRoutePoints = [];
       double totalDist = 0;
       final List<double> legDist = [];
@@ -486,10 +580,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         );
       }
 
-      // Markers
-      final List<Marker> newMarkers = _buildMarkers(enrichedStops);
-
-      // Polyline
       final List<Polyline> newPolylines = [];
       if (fullRoutePoints.length > 1) {
         newPolylines.add(Polyline(
@@ -503,14 +593,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
       if (!mounted) return;
       setState(() {
-        _polylines        = newPolylines;
-        _markers          = newMarkers;
-        _optimizedStops   = enrichedStops;
-        _totalDistanceKm  = totalDist;
-        _routeIsValid     = true;
-        _loadingRoutes    = false;
-        // ── Store full route points for simulation ──
-        _fullRoutePoints  = List<LatLng>.from(fullRoutePoints);
+        _polylines       = newPolylines;
+        _markers         = _buildMarkers(enrichedStops);
+        _optimizedStops  = enrichedStops;
+        _totalDistanceKm = totalDist;
+        _routeIsValid    = true;
+        _loadingRoutes   = false;
+        _fullRoutePoints = List<LatLng>.from(fullRoutePoints);
       });
 
       if (waypoints.length > 1) {
@@ -529,12 +618,14 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   }
 
   // ─────────────────────────────────────────────────────────
-  // REAL MODE: load VRP solution from API
+  // REAL MODE: VRP solution from API
+  // Falls back to nearest-neighbour when Python is unavailable.
   // ─────────────────────────────────────────────────────────
   Future<void> _loadOptimizedRoutesFromApi() async {
     setState(() => _loadingRoutes = true);
 
     try {
+      // 1. Fetch all accepted commandes from MongoDB
       final commandes = await ApiService.getCommandes(status: 'en livraison');
 
       if (commandes.isEmpty) {
@@ -550,14 +641,17 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         return;
       }
 
+      // Build mongoId → full commande lookup
       final Map<String, Map<String, dynamic>> commandeById = {
         for (final c in commandes)
           (c['_id'] ?? c['id']).toString(): c,
       };
 
+      // 2. Try to get NSGA-II solution from Python via Node.js
       final vrpResult = await ApiService.getVrpSolution();
 
       List<String> orderedMongoIds = [];
+      bool usedVrp = false;
 
       if (vrpResult['error'] == null && vrpResult['routes'] != null) {
         final routes = vrpResult['routes'] as List;
@@ -565,6 +659,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             (vrpResult['distance_totale_km'] as num?)?.toDouble();
         _routeIsValid = vrpResult['valide'] as bool? ?? false;
 
+        // Map vrpId (Python int) → mongoId (MongoDB ObjectId string)
         final Map<String, String> vrpToMongo = {};
         for (final c in commandes) {
           final mongoId = (c['_id'] ?? c['id']).toString();
@@ -579,14 +674,49 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             if (mongoId != null) orderedMongoIds.add(mongoId);
           }
         }
+
+        if (orderedMongoIds.isNotEmpty) usedVrp = true;
       }
 
-      if (orderedMongoIds.isEmpty) {
-        orderedMongoIds = commandeById.keys.toList();
+      // 3. FALLBACK: Python unavailable or returned empty routes.
+      //    Use nearest-neighbour sort on real commandes.
+      //    Real MongoDB docs store coords in position: { lat, lon }
+      //    so we extract them into a flat list that the sort helper
+      //    can read via o['lat'] / o['lon'].
+      if (!usedVrp) {
         _totalDistanceKm = null;
         _routeIsValid    = false;
+
+        final flatList = commandeById.entries
+            .map((e) {
+          final lat =
+          (e.value['position']?['lat'] as num?)?.toDouble();
+          final lon =
+          (e.value['position']?['lon'] as num?)?.toDouble();
+          if (lat == null || lon == null) return null;
+          return <String, dynamic>{
+            '_mongoId': e.key,
+            'lat':      lat,
+            'lon':      lon,
+          };
+        })
+            .whereType<Map<String, dynamic>>()
+            .toList();
+
+        final sorted = _nearestNeighbourSort(_currentPosition, flatList);
+        orderedMongoIds =
+            sorted.map((o) => o['_mongoId'].toString()).toList();
+
+        debugPrint(
+          '[Map] VRP indisponible — nearest-neighbour fallback: '
+              '${orderedMongoIds.length} arrêts',
+        );
+      } else {
+        debugPrint('[Map] NSGA-II utilisé: ${orderedMongoIds.length} arrêts');
       }
 
+      // 4. Build waypoints from ordered mongo IDs
+      //    Always read position.lat/lon — the real MongoDB structure.
       final List<LatLng>     waypoints = [_currentPosition];
       final List<_RouteStop> stops     = [];
 
@@ -599,9 +729,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         final lon = (cmd['position']?['lon'] as num?)?.toDouble();
         if (lat == null || lon == null) continue;
 
-        final clientName = (cmd['client'] is Map)
-            ? '${cmd['client']['prenom'] ?? ''} ${cmd['client']['nom'] ?? ''}'
-            .trim()
+        final raw = cmd['client'];
+        final clientName = (raw is Map)
+            ? '${raw['prenom'] ?? ''} ${raw['nom'] ?? ''}'.trim()
             : 'Client ${i + 1}';
 
         waypoints.add(LatLng(lat, lon));
@@ -615,9 +745,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ));
       }
 
+      // 5. OSRM road segments for polyline + real distances
       final List<LatLng> fullRoutePoints = [];
       double segmentDistKm = 0;
-
       final List<double> legDistances = [];
       final List<double> legDurations = [];
 
@@ -633,7 +763,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         } else {
           fullRoutePoints.addAll(pts);
         }
-
         segmentDistKm += d;
         legDistances.add(d);
         legDurations.add(dur);
@@ -645,8 +774,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           durationMin: legDurations[i],
         );
       }
-
-      final List<Marker> newMarkers = _buildMarkers(stops);
 
       final List<Polyline> newPolylines = [];
       if (fullRoutePoints.length > 1) {
@@ -662,11 +789,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       if (!mounted) return;
       setState(() {
         _polylines        = newPolylines;
-        _markers          = newMarkers;
+        _markers          = _buildMarkers(stops);
         _optimizedStops   = stops;
         _totalDistanceKm  = _totalDistanceKm ?? segmentDistKm;
         _loadingRoutes    = false;
-        // ── Store full route points for simulation ──
         _fullRoutePoints  = List<LatLng>.from(fullRoutePoints);
       });
 
@@ -686,7 +812,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   }
 
   // ─────────────────────────────────────────────────────────
-  // SHARED MARKER BUILDER (extracted to avoid duplication)
+  // SHARED MARKER BUILDER
   // ─────────────────────────────────────────────────────────
   List<Marker> _buildMarkers(List<_RouteStop> stops) {
     final stopColors = [
@@ -695,7 +821,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     ];
 
     final List<Marker> markers = [
-      // Driver marker
       Marker(
         point:  _currentPosition,
         width:  56,
@@ -730,7 +855,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color:        color,
                 borderRadius: BorderRadius.circular(10),
@@ -811,8 +937,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     );
     if (result != null) {
       try {
-        final res =
-        await ApiService.updateWaterQuantity(quantiteEau: result);
+        final res = await ApiService.updateWaterQuantity(quantiteEau: result);
         if (res['error'] != null) {
           _showSnack('Erreur serveur', Colors.red);
           return;
@@ -841,7 +966,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   Widget _buildMapScreen() {
     return Stack(
       children: [
-        // ── Map ─────────────────────────────────────────────
         FlutterMap(
           mapController: _mapController,
           options: MapOptions(
@@ -860,7 +984,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
               PolylineLayer(polylines: _polylines),
             MarkerLayer(
               markers: [
-                // Real GPS dot (only when simulation is OFF)
                 if (_gpsReady && _simPosition == null)
                   Marker(
                     point:  _currentPosition,
@@ -875,7 +998,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     ),
                   ),
                 ..._markers,
-                // ── Simulated truck marker ───────────────────
                 if (_simPosition != null)
                   Marker(
                     point:  _simPosition!,
@@ -903,7 +1025,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ],
         ),
 
-        // ── Top bar ──────────────────────────────────────────
+        // Top bar
         Positioned(
           top: 0, left: 0, right: 0,
           child: Container(
@@ -924,7 +1046,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const SizedBox(width: 40),
-                    // Capacity pill
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 10),
@@ -960,7 +1081,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                         ),
                       ]),
                     ),
-                    // GPS / loading indicator
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
@@ -988,7 +1108,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ),
         ),
 
-        // ── FABs ─────────────────────────────────────────────
+        // FABs
         Positioned(
           right: 16,
           top:   MediaQuery.of(context).padding.top + 100,
@@ -1017,7 +1137,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ),
         ),
 
-        // ── Route summary panel or online/offline toggle ─────
         if (isOnline && _optimizedStops.isNotEmpty)
           Positioned(
             bottom: 90,
@@ -1054,7 +1173,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           // Header
           Container(
             padding: const EdgeInsets.symmetric(
-                horizontal: 10, vertical: 12),
+                horizontal: 10, vertical: 10),
             decoration: const BoxDecoration(
               color:        Color(0xFF1E3A8A),
               borderRadius: BorderRadius.vertical(
@@ -1094,25 +1213,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                   ),
                 const SizedBox(width: 8),
                 GestureDetector(
-                  onTap: _toggleOnlineStatus,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color:        Colors.red,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text('STOP',
-                        style: TextStyle(
-                            color:      Colors.white,
-                            fontSize:   11,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                GestureDetector(
                   onTap: () async {
                     for (final stop in _optimizedStops) {
-                      await _refuseOrder(stop.mongoId);
+                      await ApiService.cancelCommande(stop.mongoId);
                     }
                     setState(() {
                       _optimizedStops  = [];
@@ -1125,7 +1228,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     _stopSimulation();
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.orange,
                       borderRadius: BorderRadius.circular(12),
@@ -1141,13 +1245,15 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             ),
           ),
 
-          // ── SIMULATION CONTROL BAR ──────────────────────────
+          // Simulation control bar
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: Colors.orange.shade50,
               border: Border(
-                bottom: BorderSide(color: Colors.orange.shade100, width: 1),
+                bottom: BorderSide(
+                    color: Colors.orange.shade100, width: 1),
               ),
             ),
             child: Row(
@@ -1165,32 +1271,31 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     ),
                   ),
                 ),
-                // Progress indicator when running
                 if (_simRunning) ...[
                   SizedBox(
                     width: 60,
                     child: LinearProgressIndicator(
                       value: _fullRoutePoints.isEmpty
                           ? 0
-                          : _simIndex / (_fullRoutePoints.length - 1),
-                      color:            Colors.orange,
-                      backgroundColor:  Colors.orange.shade100,
-                      minHeight:        4,
-                      borderRadius:     BorderRadius.circular(2),
+                          : _simIndex /
+                          (_fullRoutePoints.length - 1),
+                      color:           Colors.orange,
+                      backgroundColor: Colors.orange.shade100,
+                      minHeight:       4,
+                      borderRadius:    BorderRadius.circular(2),
                     ),
                   ),
                   const SizedBox(width: 8),
                 ],
-                // PLAY button
                 _SimButton(
-                  icon:     Icons.play_arrow,
-                  color:    Colors.green,
-                  enabled:  !_simRunning && _fullRoutePoints.isNotEmpty,
-                  onTap:    _startSimulation,
-                  tooltip:  _simStarted ? 'Reprendre' : 'Démarrer',
+                  icon:    Icons.play_arrow,
+                  color:   Colors.green,
+                  enabled: !_simRunning &&
+                      _fullRoutePoints.isNotEmpty,
+                  onTap:   _startSimulation,
+                  tooltip: _simStarted ? 'Reprendre' : 'Démarrer',
                 ),
                 const SizedBox(width: 6),
-                // PAUSE button
                 _SimButton(
                   icon:    Icons.pause,
                   color:   Colors.orange,
@@ -1199,7 +1304,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                   tooltip: 'Pause',
                 ),
                 const SizedBox(width: 6),
-                // RESET button
                 _SimButton(
                   icon:    Icons.stop,
                   color:   Colors.red,
@@ -1249,8 +1353,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       : null,
                   trailing: stop.distanceKm != null
                       ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment:
+                    MainAxisAlignment.center,
+                    crossAxisAlignment:
+                    CrossAxisAlignment.end,
                     children: [
                       Text(
                         '${stop.distanceKm!.toStringAsFixed(1)} km',
@@ -1263,7 +1369,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                         Text(
                           '${stop.durationMin!.round()} min',
                           style: const TextStyle(
-                              color:   Colors.grey,
+                              color:    Colors.grey,
                               fontSize: 10),
                         ),
                     ],
@@ -1307,7 +1413,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     style: TextStyle(
                       fontSize:   20,
                       fontWeight: FontWeight.bold,
-                      color: isOnline ? Colors.green : Colors.black87,
+                      color: isOnline
+                          ? Colors.green
+                          : Colors.black87,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -1315,8 +1423,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     isOnline
                         ? 'En attente de commandes.'
                         : 'Vous ne recevez pas de commandes.',
-                    style:
-                    TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    style: TextStyle(
+                        fontSize: 14, color: Colors.grey[600]),
                   ),
                 ],
               ),
@@ -1331,9 +1439,11 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       ? Colors.red
                       : const Color(0xFF1E3A8A),
                   boxShadow: [BoxShadow(
-                    color: (isOnline ? Colors.red : const Color(0xFF1E3A8A))
+                    color: (isOnline
+                        ? Colors.red
+                        : const Color(0xFF1E3A8A))
                         .withOpacity(0.4),
-                    blurRadius: 15,
+                    blurRadius:   15,
                     spreadRadius: 2,
                   )],
                 ),
@@ -1349,6 +1459,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 ),
               ),
             ),
+
           ],
         ),
       ),
@@ -1371,7 +1482,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 onTap: () => Navigator.pop(context),
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  padding:
+                  const EdgeInsets.symmetric(vertical: 10),
                   color: const Color(0xFF0B3C49),
                   child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1431,11 +1543,11 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 // Small reusable simulation button
 // ─────────────────────────────────────────────────────────
 class _SimButton extends StatelessWidget {
-  final IconData icon;
-  final Color    color;
-  final bool     enabled;
+  final IconData     icon;
+  final Color        color;
+  final bool         enabled;
   final VoidCallback onTap;
-  final String   tooltip;
+  final String       tooltip;
 
   const _SimButton({
     required this.icon,
@@ -1466,7 +1578,9 @@ class _SimButton extends StatelessWidget {
                 : null,
           ),
           child: Icon(icon,
-              color: enabled ? Colors.white : Colors.grey.shade500,
+              color: enabled
+                  ? Colors.white
+                  : Colors.grey.shade500,
               size: 18),
         ),
       ),

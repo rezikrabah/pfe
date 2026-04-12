@@ -75,16 +75,34 @@ class _CommandesState extends State<commandes> {
       final result = await ApiService.addCommande(
         capacite: demand.toDouble(),
         prix: demand.toDouble() * 2,
-        lat: _selectedLat, lon: _selectedLon,
+        lat: _selectedLat,
+        lon: _selectedLon,
         fournisseurId: selectedFournisseur!.id,
       );
       if (mounted && result['error'] == null) {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => ClientTrackingPage(
-          commandeId: (result['_id'] ?? result['id']).toString(),
-          clientId: ApiService.userId ?? widget.clientId.toString(),
-        )));
+        // Fetch client name for the review screen
+        final clientInfo = await ApiService.getClientInfo();
+        final clientNom =
+        '${clientInfo['prenom'] ?? ''} ${clientInfo['nom'] ?? ''}'.trim();
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ClientTrackingPage(
+              commandeId:  (result['_id'] ?? result['id']).toString(),
+              clientId:    ApiService.userId ?? widget.clientId.toString(),
+              clientNom:   clientNom.isNotEmpty ? clientNom : 'Client',
+              volumeLivre: double.tryParse(selectedVolume!.replaceAll('L', '')) ?? 0.0,
+              adresse:     selectedPosition!,
+            ),
+          ),
+        );
+      } else if (mounted && result['error'] != null) {
+        _showError(result['error']);
       }
-    } finally { if (mounted) setState(() => _submitting = false); }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   void _showError(String msg) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red)); }

@@ -678,6 +678,7 @@ class ApiService {
   static Future<Map<String, dynamic>> updateCommandeStatus({
     required String commandeId,
     required String status,
+    required prix,
   }) async {
     try {
       final response = await http.put(
