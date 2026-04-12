@@ -17,11 +17,11 @@ class Loginpage extends StatefulWidget {
 }
 
 class _LoginpageState extends State<Loginpage> {
-  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _emailController    = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
-  bool _isLoading = false;
+  bool _isLoading       = false;
   bool _obscurePassword = true;
 
   @override
@@ -36,7 +36,7 @@ class _LoginpageState extends State<Loginpage> {
     setState(() => _isLoading = true);
 
     final result = await ApiService.login(
-      email: _emailController.text.trim(),
+      email:    _emailController.text.trim(),
       password: _passwordController.text.trim(),
     );
 
@@ -84,15 +84,18 @@ class _LoginpageState extends State<Loginpage> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth  = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0C2A34),
       appBar: AppBar(
         iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
+        title: Text(
           'LOG IN',
           style: TextStyle(
-            color: Color(0xFFEAFBFF),
-            fontSize: 13,
+            color: const Color(0xFFEAFBFF),
+            fontSize: screenWidth * 0.033,
             fontWeight: FontWeight.bold,
             letterSpacing: 2,
           ),
@@ -101,9 +104,10 @@ class _LoginpageState extends State<Loginpage> {
         centerTitle: true,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 12),
+            padding: EdgeInsets.only(right: screenWidth * 0.03),
             child: Icon(Icons.water_drop,
-                size: 26, color: const Color(0xFF1E88E5)),
+                size: screenWidth * 0.065,
+                color: const Color(0xFF1E88E5)),
           ),
         ],
       ),
@@ -111,6 +115,7 @@ class _LoginpageState extends State<Loginpage> {
         key: _formKey,
         child: Stack(
           children: [
+
             // ── Background image ──────────────────────────
             Positioned.fill(
               child: CachedNetworkImage(
@@ -143,10 +148,11 @@ class _LoginpageState extends State<Loginpage> {
             // ── Content ───────────────────────────────────
             SafeArea(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 28),
+                padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.07),
                 child: Column(
                   children: [
-                    const SizedBox(height: 40),
+
+                    SizedBox(height: screenHeight * 0.04),
 
                     // ── Logo ────────────────────────────────
                     Container(
@@ -160,79 +166,48 @@ class _LoginpageState extends State<Loginpage> {
                           ),
                         ],
                       ),
-                      child: const CircleAvatar(
-                        radius: 38,
-                        backgroundImage: AssetImage('assets/app.png'),
+                      child: CircleAvatar(
+                        radius: screenWidth * 0.1,
+                        backgroundImage: const AssetImage('assets/app.png'),
                       ),
                     ),
-                    const SizedBox(height: 16),
+
+                    SizedBox(height: screenHeight * 0.02),
 
                     // ── Title ────────────────────────────────
-                    const Text(
+                    Text(
                       'Welcome back',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 24,
+                        fontSize: screenWidth * 0.06,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    const Text(
+
+                    SizedBox(height: screenHeight * 0.005),
+
+                    Text(
                       'Add your details to log in',
                       style: TextStyle(
-                        color: Color(0xFFB8E3F0),
-                        fontSize: 13,
+                        color: const Color(0xFFB8E3F0),
+                        fontSize: screenWidth * 0.033,
                         fontWeight: FontWeight.w400,
                       ),
                     ),
-                    const SizedBox(height: 32),
+
+                    SizedBox(height: screenHeight * 0.035),
 
                     // ── Email field ──────────────────────────
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 14),
-                      decoration: InputDecoration(
-                        labelText: 'Email',
-                        labelStyle: const TextStyle(
-                          color: Color(0xFF9EC7CF),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        hintText: 'john@example.com',
-                        hintStyle: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.25),
-                        ),
-                        prefixIcon: const Icon(Icons.email_outlined,
-                            color: Color(0xFF00C8F0), size: 20),
-                        filled: true,
-                        fillColor: Colors.white.withOpacity(0.06),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Color(0xFF0099CC), width: 1),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Color(0xFF00C8F0), width: 1.5),
-                        ),
-                        errorBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Colors.red, width: 1),
-                        ),
-                        focusedErrorBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Colors.red, width: 1.5),
-                        ),
-                        errorStyle: const TextStyle(
-                            color: Colors.redAccent, fontSize: 11),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 14),
+                      style: TextStyle(color: Colors.white, fontSize: screenWidth * 0.035),
+                      decoration: _inputDecoration(
+                        label: 'Email',
+                        hint: 'john@example.com',
+                        icon: Icons.email_outlined,
+                        screenWidth: screenWidth,
+                        screenHeight: screenHeight,
                       ),
                       validator: (v) {
                         if (v!.isEmpty) return 'Please enter your email';
@@ -240,65 +215,31 @@ class _LoginpageState extends State<Loginpage> {
                         return null;
                       },
                     ),
-                    const SizedBox(height: 14),
+
+                    SizedBox(height: screenHeight * 0.018),
 
                     // ── Password field ───────────────────────
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 14),
-                      decoration: InputDecoration(
-                        labelText: 'Password',
-                        labelStyle: const TextStyle(
-                          color: Color(0xFF9EC7CF),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        hintText: '••••••••',
-                        hintStyle: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.25),
-                        ),
-                        prefixIcon: const Icon(Icons.lock_outline,
-                            color: Color(0xFF00C8F0), size: 20),
+                      style: TextStyle(color: Colors.white, fontSize: screenWidth * 0.035),
+                      decoration: _inputDecoration(
+                        label: 'Password',
+                        hint: '••••••••',
+                        icon: Icons.lock_outline,
+                        screenWidth: screenWidth,
+                        screenHeight: screenHeight,
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword
                                 ? Icons.visibility_off_outlined
                                 : Icons.visibility_outlined,
                             color: const Color(0xFF9EC7CF),
-                            size: 20,
+                            size: screenWidth * 0.05,
                           ),
                           onPressed: () => setState(
                                   () => _obscurePassword = !_obscurePassword),
                         ),
-                        filled: true,
-                        fillColor: Colors.white.withOpacity(0.06),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Color(0xFF0099CC), width: 1),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Color(0xFF00C8F0), width: 1.5),
-                        ),
-                        errorBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Colors.red, width: 1),
-                        ),
-                        focusedErrorBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: Colors.red, width: 1.5),
-                        ),
-                        errorStyle: const TextStyle(
-                            color: Colors.redAccent, fontSize: 11),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 14),
                       ),
                       validator: (v) {
                         if (v!.isEmpty) return 'Please enter your password';
@@ -311,31 +252,31 @@ class _LoginpageState extends State<Loginpage> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => forgotpassword()),
-                        ),
+                        onPressed: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => forgotpassword())),
                         style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 0, vertical: 8),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 0,
+                            vertical: screenHeight * 0.01,
+                          ),
                         ),
-                        child: const Text(
+                        child: Text(
                           'Forgot password?',
                           style: TextStyle(
-                            color: Color(0xFF00C8F0),
-                            fontSize: 12,
+                            color: const Color(0xFF00C8F0),
+                            fontSize: screenWidth * 0.03,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
+
+                    SizedBox(height: screenHeight * 0.01),
 
                     // ── Login button ─────────────────────────
                     SizedBox(
                       width: double.infinity,
-                      height: 52,
+                      height: screenHeight * 0.065,
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _login,
                         style: ElevatedButton.styleFrom(
@@ -349,59 +290,109 @@ class _LoginpageState extends State<Loginpage> {
                           elevation: 0,
                         ),
                         child: _isLoading
-                            ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
+                            ? SizedBox(
+                          width: screenWidth * 0.055,
+                          height: screenWidth * 0.055,
+                          child: const CircularProgressIndicator(
                             color: Colors.white,
                             strokeWidth: 2,
                           ),
                         )
-                            : const Text(
+                            : Text(
                           'Log in',
                           style: TextStyle(
-                            fontSize: 16,
+                            fontSize: screenWidth * 0.04,
                             fontWeight: FontWeight.w600,
                             letterSpacing: 0.5,
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+
+                    SizedBox(height: screenHeight * 0.03),
 
                     // ── Sign up link ─────────────────────────
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text(
+                        Text(
                           "Don't have an account? ",
                           style: TextStyle(
-                              color: Color(0xFF9EC7CF), fontSize: 13),
+                            color: const Color(0xFF9EC7CF),
+                            fontSize: screenWidth * 0.033,
+                          ),
                         ),
                         GestureDetector(
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => createaccpage()),
-                          ),
-                          child: const Text(
+                          onTap: () => Navigator.push(context,
+                              MaterialPageRoute(builder: (_) => createaccpage())),
+                          child: Text(
                             'Sign up',
                             style: TextStyle(
-                              color: Color(0xFF00C8F0),
-                              fontSize: 13,
+                              color: const Color(0xFF00C8F0),
+                              fontSize: screenWidth * 0.033,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 32),
+
+                    SizedBox(height: screenHeight * 0.04),
                   ],
                 ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── Input decoration helper ───────────────────────────────
+  InputDecoration _inputDecoration({
+    required String label,
+    required String hint,
+    required IconData icon,
+    required double screenWidth,
+    required double screenHeight,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: TextStyle(
+        color: const Color(0xFF9EC7CF),
+        fontSize: screenWidth * 0.033,
+        fontWeight: FontWeight.w500,
+      ),
+      hintText: hint,
+      hintStyle: TextStyle(
+        fontSize: screenWidth * 0.03,
+        color: Colors.white.withOpacity(0.25),
+      ),
+      prefixIcon: Icon(icon, color: const Color(0xFF00C8F0), size: screenWidth * 0.05),
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.06),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFF0099CC), width: 1),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFF00C8F0), width: 1.5),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Colors.red, width: 1),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Colors.red, width: 1.5),
+      ),
+      errorStyle: const TextStyle(color: Colors.redAccent, fontSize: 11),
+      contentPadding: EdgeInsets.symmetric(
+        horizontal: screenWidth * 0.04,
+        vertical: screenHeight * 0.018,
       ),
     );
   }

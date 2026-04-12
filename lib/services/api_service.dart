@@ -12,12 +12,13 @@ class ApiService {
   static const String baseUrl = 'https://pfe-backend-nwmy.onrender.com';
 
   /// Python FastAPI — VRP NSGA-II optimization (local PC)
-  static const String pythonUrl = 'http://10.0.2.2:8000';
+  static const String pythonUrl = 'https://pfebackendpython.onrender.com/';
 
   // Stored after login
   static String? token;
   static String? userId;
   static String? userRole;
+  static String? clientId;
 
   // ─────────────────────────────────────────
   // HEADERS
@@ -65,6 +66,27 @@ class ApiService {
   // ─────────────────────────────────────────
   // AUTH  →  /api/auth
   // ─────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────
+  // ADD THIS METHOD to your existing ApiService class
+  // Gets the current VRP optimised solution from Python
+  // Returns the ordered route list per conducteur
+  // ─────────────────────────────────────────────────────────
+  static Future<Map<String, dynamic>> getVrpSolution() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$pythonUrl/optimisation/solution'),
+      ).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return {'error': 'VRP not ready (${res.statusCode})'};
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable.'};
+    } on TimeoutException {
+      return {'error': 'VRP timeout.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
 
   static Future<Map<String, dynamic>> register({
     required String nom,
@@ -425,16 +447,17 @@ class ApiService {
     required String commandeId,
     required String chauffeurId,
   }) async {
+    print('>>> assignCommande called | commandeId: $commandeId | chauffeurId: $chauffeurId');
     try {
       final response = await http.put(
         Uri.parse('$baseUrl/api/commandes/assign/$commandeId/$chauffeurId'),
         headers: _authHeaders,
       );
+      print('>>> assign status: ${response.statusCode}');
+      print('>>> assign body: ${response.body}');
       return _decode(response);
     } on SocketException {
-      return {'error': 'Connection error. Check your internet.'};
-    } on TimeoutException {
-      return {'error': 'Request timed out. Try again.'};
+      return {'error': 'Connection error.'};
     } catch (e) {
       return {'error': e.toString()};
     }
@@ -460,8 +483,11 @@ class ApiService {
     try {
       final response = await http.put(
         Uri.parse('$baseUrl/api/commandes/cancel/$commandeId'),
+
         headers: _authHeaders,
       );
+      print('>>> cancel status: ${response.statusCode}');  // ← add
+      print('>>> cancel body: ${response.body}');          // ← add
       return _decode(response);
     } on SocketException {
       return {'error': 'Connection error. Check your internet.'};
@@ -639,6 +665,48 @@ class ApiService {
       return {'error': 'Connection error. Check your internet.'};
     } on TimeoutException {
       return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // ─────────────────────────────────────────
+// COMMANDE  →  /api/commandes (AJOUTS)
+// ─────────────────────────────────────────
+
+  /// ✅ NOUVEAU : Mettre à jour le statut d'une commande
+  static Future<Map<String, dynamic>> updateCommandeStatus({
+    required String commandeId,
+    required String status,
+  }) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/commandes/status/$commandeId'),
+        headers: _authHeaders,
+        body: jsonEncode({'status': status}),
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// ✅ NOUVEAU : Récupérer une commande par ID
+  static Future<Map<String, dynamic>> getCommandeById(String commandeId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/commandes/$commandeId'),
+        headers: _authHeaders,
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out.'};
     } catch (e) {
       return {'error': e.toString()};
     }

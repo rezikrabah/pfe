@@ -2,7 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:test2/client/historique.dart';
 import 'package:test2/pages/Loginpage.dart';
-import 'package:test2/pages/main.dart'; // Pour themeNotifier
+import 'package:test2/main.dart'; // Pour themeNotifier
 import 'clientpage.dart';
 import 'commandes.dart';
 import 'package:test2/client/suivi.dart';

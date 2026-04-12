@@ -1,7 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:test2/pages/Loginpage.dart';
-import 'package:test2/pages/Verifyemailscreen.dart'; // ✅ verify screen
+import 'package:test2/pages/Verifyemailscreen.dart';
 import '../services/api_service.dart';
 
 class createaccpage extends StatefulWidget {
@@ -12,18 +12,18 @@ class createaccpage extends StatefulWidget {
 }
 
 class _createaccpageState extends State<createaccpage> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController _nomController = TextEditingController();
-  final TextEditingController _prenomController = TextEditingController();
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
+  final _formKey                                          = GlobalKey<FormState>();
+  final TextEditingController _nomController             = TextEditingController();
+  final TextEditingController _prenomController          = TextEditingController();
+  final TextEditingController _emailController           = TextEditingController();
+  final TextEditingController _phoneController           = TextEditingController();
+  final TextEditingController _passwordController        = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
-  final TextEditingController _adresseController = TextEditingController();
+  final TextEditingController _adresseController         = TextEditingController();
 
-  bool _isLoading = false;
+  bool _isLoading       = false;
   bool _obscurePassword = true;
-  bool _obscureConfirm = true;
+  bool _obscureConfirm  = true;
 
   @override
   void dispose() {
@@ -66,7 +66,6 @@ class _createaccpageState extends State<createaccpage> {
           backgroundColor: Colors.green,
         ),
       );
-      // ✅ Go to email verification screen
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -91,6 +90,8 @@ class _createaccpageState extends State<createaccpage> {
     required String label,
     required String hint,
     required IconData icon,
+    required double screenWidth,
+    required double screenHeight,
     TextInputType keyboardType = TextInputType.text,
     bool obscure = false,
     Widget? suffix,
@@ -100,17 +101,20 @@ class _createaccpageState extends State<createaccpage> {
       controller: controller,
       keyboardType: keyboardType,
       obscureText: obscure,
-      style: const TextStyle(color: Colors.white, fontSize: 14),
+      style: TextStyle(color: Colors.white, fontSize: screenWidth * 0.035),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(
-          color: Color(0xFF9EC7CF),
-          fontSize: 13,
+        labelStyle: TextStyle(
+          color: const Color(0xFF9EC7CF),
+          fontSize: screenWidth * 0.032,
           fontWeight: FontWeight.w500,
         ),
         hintText: hint,
-        hintStyle: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.25)),
-        prefixIcon: Icon(icon, color: const Color(0xFF00C8F0), size: 20),
+        hintStyle: TextStyle(
+          fontSize: screenWidth * 0.03,
+          color: Colors.white.withOpacity(0.25),
+        ),
+        prefixIcon: Icon(icon, color: const Color(0xFF00C8F0), size: screenWidth * 0.05),
         suffixIcon: suffix,
         filled: true,
         fillColor: Colors.white.withOpacity(0.06),
@@ -131,7 +135,10 @@ class _createaccpageState extends State<createaccpage> {
           borderSide: const BorderSide(color: Colors.red, width: 1.5),
         ),
         errorStyle: const TextStyle(color: Colors.redAccent, fontSize: 11),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: screenWidth * 0.04,
+          vertical: screenHeight * 0.018,
+        ),
       ),
       validator: validator,
     );
@@ -139,15 +146,18 @@ class _createaccpageState extends State<createaccpage> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth  = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+
     return Scaffold(
       backgroundColor: const Color(0xFF071628),
       appBar: AppBar(
         iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
+        title: Text(
           'CREATE YOUR ACCOUNT',
           style: TextStyle(
-            color: Color(0xFFB4DCE6),
-            fontSize: 11,
+            color: const Color(0xFFB4DCE6),
+            fontSize: screenWidth * 0.028,
             fontWeight: FontWeight.bold,
             letterSpacing: 2,
           ),
@@ -156,18 +166,24 @@ class _createaccpageState extends State<createaccpage> {
         centerTitle: true,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Icon(Icons.water_drop, size: 26, color: const Color(0xFF1E88E5)),
+            padding: EdgeInsets.only(right: screenWidth * 0.03),
+            child: Icon(Icons.water_drop,
+                size: screenWidth * 0.065,
+                color: const Color(0xFF1E88E5)),
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        padding: EdgeInsets.symmetric(
+          horizontal: screenWidth * 0.06,
+          vertical: screenHeight * 0.02,
+        ),
         child: Form(
           key: _formKey,
           child: Column(
             children: [
-              // ── Logo ──────────────────────────────────────
+
+              // ── Logo ────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
@@ -179,42 +195,65 @@ class _createaccpageState extends State<createaccpage> {
                     ),
                   ],
                 ),
-                child: const CircleAvatar(
-                  radius: 38,
-                  backgroundImage: AssetImage('assets/app.png'),
+                child: CircleAvatar(
+                  radius: screenWidth * 0.1,
+                  backgroundImage: const AssetImage('assets/app.png'),
                 ),
               ),
-              const SizedBox(height: 12),
-              const Text('Sign Up',
-                  style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 4),
-              const Text('Add your details to get started',
-                  style: TextStyle(color: Color(0xFF9EC7CF), fontSize: 13)),
-              const SizedBox(height: 24),
 
-              // ── Name row ──────────────────────────────────
+              SizedBox(height: screenHeight * 0.015),
+
+              Text(
+                'Sign Up',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: screenWidth * 0.055,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+
+              SizedBox(height: screenHeight * 0.005),
+
+              Text(
+                'Add your details to get started',
+                style: TextStyle(
+                  color: const Color(0xFF9EC7CF),
+                  fontSize: screenWidth * 0.033,
+                ),
+              ),
+
+              SizedBox(height: screenHeight * 0.025),
+
+              // ── Name row ──────────────────────────────
               Row(children: [
                 Expanded(child: _buildField(
                   controller: _nomController,
                   label: 'Last name', hint: 'Doe',
                   icon: Icons.badge_outlined,
+                  screenWidth: screenWidth,
+                  screenHeight: screenHeight,
                   validator: (v) => v!.isEmpty ? 'Required' : null,
                 )),
-                const SizedBox(width: 12),
+                SizedBox(width: screenWidth * 0.03),
                 Expanded(child: _buildField(
                   controller: _prenomController,
                   label: 'First name', hint: 'John',
                   icon: Icons.person_outline,
+                  screenWidth: screenWidth,
+                  screenHeight: screenHeight,
                   validator: (v) => v!.isEmpty ? 'Required' : null,
                 )),
               ]),
-              const SizedBox(height: 12),
 
-              // ── Email ─────────────────────────────────────
+              SizedBox(height: screenHeight * 0.015),
+
+              // ── Email ────────────────────────────────
               _buildField(
                 controller: _emailController,
                 label: 'Email', hint: 'john@gmail.com',
                 icon: Icons.email_outlined,
+                screenWidth: screenWidth,
+                screenHeight: screenHeight,
                 keyboardType: TextInputType.emailAddress,
                 validator: (v) {
                   if (v!.isEmpty) return 'Please enter your email';
@@ -222,49 +261,64 @@ class _createaccpageState extends State<createaccpage> {
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
 
-              // ── Phone ─────────────────────────────────────
+              SizedBox(height: screenHeight * 0.015),
+
+              // ── Phone ────────────────────────────────
               _buildField(
                 controller: _phoneController,
                 label: 'Phone number', hint: '0555 123 456',
                 icon: Icons.phone_outlined,
+                screenWidth: screenWidth,
+                screenHeight: screenHeight,
                 keyboardType: TextInputType.phone,
                 validator: (v) => v!.isEmpty ? 'Required' : null,
               ),
-              const SizedBox(height: 12),
 
-              // ── Password ──────────────────────────────────
+              SizedBox(height: screenHeight * 0.015),
+
+              // ── Password ─────────────────────────────
               _buildField(
                 controller: _passwordController,
                 label: 'Password', hint: '••••••••',
                 icon: Icons.lock_outline,
+                screenWidth: screenWidth,
+                screenHeight: screenHeight,
                 obscure: _obscurePassword,
                 suffix: IconButton(
                   icon: Icon(
-                    _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                    color: const Color(0xFF9EC7CF), size: 20,
+                    _obscurePassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: const Color(0xFF9EC7CF),
+                    size: screenWidth * 0.05,
                   ),
                   onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                 ),
                 validator: (v) {
                   if (v!.isEmpty) return 'Please enter your password';
-                  if (v.length < 6) return 'At least 6 characters';
+                  if (v.length < 8) return 'At least 8 characters';
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
 
-              // ── Confirm password ──────────────────────────
+              SizedBox(height: screenHeight * 0.015),
+
+              // ── Confirm password ──────────────────────
               _buildField(
                 controller: _confirmPasswordController,
                 label: 'Confirm password', hint: '••••••••',
                 icon: Icons.lock_outline,
+                screenWidth: screenWidth,
+                screenHeight: screenHeight,
                 obscure: _obscureConfirm,
                 suffix: IconButton(
                   icon: Icon(
-                    _obscureConfirm ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                    color: const Color(0xFF9EC7CF), size: 20,
+                    _obscureConfirm
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: const Color(0xFF9EC7CF),
+                    size: screenWidth * 0.05,
                   ),
                   onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
                 ),
@@ -274,53 +328,77 @@ class _createaccpageState extends State<createaccpage> {
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
 
-              // ── Address ───────────────────────────────────
+              SizedBox(height: screenHeight * 0.015),
+
+              // ── Address ───────────────────────────────
               _buildField(
                 controller: _adresseController,
                 label: 'Address', hint: 'Enter your address',
                 icon: Icons.location_on_outlined,
+                screenWidth: screenWidth,
+                screenHeight: screenHeight,
                 validator: (v) => v!.isEmpty ? 'Required' : null,
               ),
-              const SizedBox(height: 28),
 
-              // ── Sign Up button ────────────────────────────
+              SizedBox(height: screenHeight * 0.03),
+
+              // ── Sign Up button ────────────────────────
               SizedBox(
                 width: double.infinity,
-                height: 52,
+                height: screenHeight * 0.065,
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : _register,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0099CC),
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                     elevation: 0,
                   ),
                   child: _isLoading
-                      ? const SizedBox(width: 22, height: 22,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Text('Sign Up',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      ? SizedBox(
+                    width: screenWidth * 0.055,
+                    height: screenWidth * 0.055,
+                    child: const CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 2),
+                  )
+                      : Text(
+                    'Sign Up',
+                    style: TextStyle(
+                      fontSize: screenWidth * 0.04,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(height: 20),
 
-              // ── Login link ────────────────────────────────
+              SizedBox(height: screenHeight * 0.025),
+
+              // ── Login link ────────────────────────────
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Text('Already have an account? ',
-                    style: TextStyle(color: Color(0xFF9EC7CF), fontSize: 13)),
+                Text(
+                  'Already have an account? ',
+                  style: TextStyle(
+                    color: const Color(0xFF9EC7CF),
+                    fontSize: screenWidth * 0.033,
+                  ),
+                ),
                 GestureDetector(
-                  onTap: () => Navigator.push(
-                      context, MaterialPageRoute(builder: (_) => Loginpage())),
-                  child: const Text('Log in',
-                      style: TextStyle(
-                          color: Color(0xFF00C8F0),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600)),
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => Loginpage())),
+                  child: Text(
+                    'Log in',
+                    style: TextStyle(
+                      color: const Color(0xFF00C8F0),
+                      fontSize: screenWidth * 0.033,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ]),
-              const SizedBox(height: 24),
+
+              SizedBox(height: screenHeight * 0.03),
             ],
           ),
         ),

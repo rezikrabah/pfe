@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:test2/fournisseur/provider_home_screen_FINAL.dart';
 import '../services/api_service.dart';
 
 class OrdersScreen extends StatefulWidget {
@@ -15,27 +15,79 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _loading = false;
   String? _error;
 
-  // ✅ Cooldown — prevent rapid repeated calls (fixes 429)
+  String? _acceptingOrderId;
   DateTime? _lastFetch;
 
   @override
   void initState() {
     super.initState();
-    _loadOrders();
+    // ── Switch to _loadOrders() when backend is running ──────────
+    _loadTestOrders();
   }
 
-  // ── Load ALL commandes for fournisseur ────────────────────
+  // ── TEST DATA (4 real Algiers addresses) ─────────────────────────
+  void _loadTestOrders() {
+    setState(() {
+      orders = [
+        {
+          'id':         'test_001',
+          'clientName': 'Karim Boudjemaa',
+          'address':    'Rue Didouche Mourad, Alger Centre',
+          'quantity':   500.0,
+          'price':      1000.0,
+          'distance':   2.3,
+          'duration':   12,
+          'status':     'pending',
+          'rawStatus':  'en attente',
+          'lat':        36.7372,
+          'lon':        3.0865,
+        },
+        {
+          'id':         'test_002',
+          'clientName': 'Amina Cherif',
+          'address':    'Cité des Oliviers, Bir Mourad Raïs',
+          'quantity':   1000.0,
+          'price':      2000.0,
+          'distance':   5.1,
+          'duration':   20,
+          'status':     'pending',
+          'rawStatus':  'en attente',
+          'lat':        36.7167,
+          'lon':        3.0583,
+        },
+        {
+          'id':         'test_003',
+          'clientName': 'Youcef Mansouri',
+          'address':    'Avenue des Frères Bouadou, Birtouta',
+          'quantity':   750.0,
+          'price':      1500.0,
+          'distance':   8.7,
+          'duration':   30,
+          'status':     'pending',
+          'rawStatus':  'en attente',
+          'lat':        36.6725,
+          'lon':        2.9972,
+        },
+        {
+          'id':         'test_004',
+          'clientName': 'Fatima Ait Oumeziane',
+          'address':    'Cité AADL, Draria',
+          'quantity':   300.0,
+          'price':      600.0,
+          'distance':   6.4,
+          'duration':   25,
+          'status':     'pending',
+          'rawStatus':  'en attente',
+          'lat':        36.7050,
+          'lon':        3.0100,
+        },
+      ];
+      _loading = false;
+    });
+  }
+
+  // ── REAL load from backend ────────────────────────────────────
   Future<void> _loadOrders() async {
-    final rawRes = await http.get(
-      Uri.parse('https://pfe-backend-nwmy.onrender.com/api/commandes'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${ApiService.token}',
-      },
-    );
-    print('RAW STATUS: ${rawRes.statusCode}');
-    print('RAW BODY: ${rawRes.body}');
-    // ✅ Block if called less than 10 seconds after last fetch
     if (_lastFetch != null &&
         DateTime.now().difference(_lastFetch!) < const Duration(seconds: 10)) {
       return;
@@ -44,14 +96,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     setState(() { _loading = true; _error = null; });
     try {
-      // ✅ Single clean call — no duplicate raw debug http call
       final data = await ApiService.getCommandes();
-
+      if (!mounted) return;
       if (data.isEmpty) {
         setState(() { orders = []; _loading = false; });
         return;
       }
-
       setState(() {
         orders = data.map<Map<String, dynamic>>((e) {
           final id        = (e['_id'] ?? e['id'] ?? '').toString();
@@ -69,6 +119,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
             if (clientName.isEmpty) clientName = client['email'] ?? 'Client $id';
           }
 
+          final posMap      = e['position'];
+          final double? lat = (posMap?['lat'] as num?)?.toDouble()
+              ?? (e['lat'] as num?)?.toDouble();
+          final double? lon = (posMap?['lon'] as num?)?.toDouble()
+              ?? (e['lon'] as num?)?.toDouble();
+
           return {
             'id':         id,
             'clientName': clientName,
@@ -79,15 +135,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
             'duration':   (e['durationMin'] as num?)?.toInt()   ?? 0,
             'status':     status,
             'rawStatus':  rawStatus,
+            'lat':        lat,
+            'lon':        lon,
           };
         }).toList();
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error   = 'Impossible de contacter le serveur.';
         _loading = false;
-
       });
     }
   }
@@ -101,20 +159,122 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
-  // ── Accept order ──────────────────────────────────────────
+  // ── ACCEPT ORDER ──────────────────────────────────────────────
   Future<void> _acceptOrder(String orderId) async {
-    setState(() => _loading = true);
+
+    // ════════════════════════════════════════════════════════════
+    // TEST MODE — no backend, nearest-neighbour Dart sort
+    // ════════════════════════════════════════════════════════════
+    if (orderId.startsWith('test_')) {
+      final order = orders.firstWhere(
+            (o) => o['id'] == orderId,
+        orElse: () => {},
+      );
+
+      setState(() {
+        final idx = orders.indexWhere((o) => o['id'] == orderId);
+        if (idx != -1) {
+          orders[idx]['status']    = 'accepted';
+          orders[idx]['rawStatus'] = 'en livraison';
+        }
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('✅ [TEST] Commande acceptée — itinéraire en cours...'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
+      ));
+
+      final allOrders = List<Map<String, dynamic>>.from(orders);
+      final providerState =
+      context.findAncestorStateOfType<ProviderHomeScreenState>();
+
+      if (providerState != null) {
+        providerState.goToMapWithRoute(
+          commandeId: orderId,
+          destLat:    order['lat'],
+          destLon:    order['lon'],
+          testOrders: allOrders,
+        );
+      } else {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProviderHomeScreen(
+              startOnline:      true,
+              activeCommandeId: orderId,
+              destinationLat:   order['lat'],
+              destinationLon:   order['lon'],
+              testOrders:       allOrders,
+            ),
+          ),
+              (route) => false,
+        );
+      }
+      return;
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // REAL MODE — full NSGA-II pipeline via backend
+    //
+    // 1. setupConducteurs  →  POST /api/commandes/setup
+    //    Sends driver GPS positions to Python so it can build
+    //    its OSRM distance matrix before running NSGA-II.
+    //
+    // 2. assignCommande    →  PUT /api/commandes/assign/:id/:cid
+    //    Node.js runs the full VRP pipeline internally:
+    //      /commandes/add  →  /commandes/accept
+    //      →  /ajouter-dynamique (cheapest insert + 2-opt)
+    //      →  /optimisation/optimiser  ← NSGA-II runs here
+    //    Returns { vrp: { routes, distance_totale_km, valide } }
+    //
+    // 3. Navigate to map  →  provider calls getVrpSolution()
+    //    which hits GET /api/commandes/solution  →  Python returns
+    //    the NSGA-II routes computed in step 2.
+    // ════════════════════════════════════════════════════════════
+    setState(() => _acceptingOrderId = orderId);
     try {
-      // ✅ Use the fournisseur (account owner) as the chauffeur directly
-      final fournisseurInfo = await ApiService.getMyInfo();
-      final chauffeurId = (fournisseurInfo['_id'] ?? fournisseurInfo['id'] ?? ApiService.userId).toString();
+      // Step 1 — resolve chauffeur ID
+      final chauffeurs   = await ApiService.getMyChauffeurs();
+      String chauffeurId = ApiService.userId ?? '';
+
+      if (chauffeurs.isNotEmpty) {
+        final available = chauffeurs
+            .where((c) => c['disponible'] == true || c['disponible'] == 1)
+            .toList();
+        if (available.isNotEmpty) {
+          chauffeurId =
+              (available.first['_id'] ?? available.first['id']).toString();
+        }
+      }
 
       if (chauffeurId.isEmpty) {
         _showError('Impossible de récupérer votre identifiant.');
-        setState(() => _loading = false);
         return;
       }
 
+      // Step 2 — push driver positions to Python BEFORE assign
+      // This fills Python's distance matrix (OSRM or Haversine).
+      // The /assign route in Node.js also does this, but doing it
+      // here first means Python is ready even if Node.js is slow.
+      try {
+        final info = await ApiService.getMyInfo();
+        final fLat = (info['position']?['lat'] as num?)?.toDouble() ?? 36.7372;
+        final fLon = (info['position']?['lon'] as num?)?.toDouble() ?? 3.0865;
+
+        await ApiService.setupConducteurs(
+          chauffeurs:     chauffeurs,
+          fournisseurLat: fLat,
+          fournisseurLon: fLon,
+        );
+        debugPrint('✅ VRP /setup done — distance matrix ready');
+      } catch (setupErr) {
+        debugPrint('⚠️ VRP /setup warning (non-fatal): $setupErr');
+      }
+
+      // Step 3 — assign → Node.js runs full NSGA-II pipeline
       final result = await ApiService.assignCommande(
         commandeId:  orderId,
         chauffeurId: chauffeurId,
@@ -122,117 +282,132 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
       if (result['error'] != null) {
         _showError(result['error']);
-      } else {
-        setState(() {
-          final idx = orders.indexWhere((o) => o['id'] == orderId);
-          if (idx != -1) orders[idx]['status'] = 'accepted';
-        });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Commande acceptée ✓'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ));
-        }
-
-        // ✅ VRP optimization using fournisseur as the single "chauffeur"
-        final order = orders.firstWhere((o) => o['id'] == orderId, orElse: () => {});
-
-        if (order.isNotEmpty) {
-          final fLat = (fournisseurInfo['position']?['lat'] as num?)?.toDouble() ?? 0.0;
-          final fLon = (fournisseurInfo['position']?['lon'] as num?)?.toDouble() ?? 0.0;
-
-          // Wrap fournisseur as a single chauffeur entry
-          final selfAsChauffeur = [
-            {
-              '_id': chauffeurId,
-              'nom': fournisseurInfo['nom'] ?? 'Moi',
-              'disponible': true,
-            }
-          ];
-
-          await ApiService.setupConducteurs(
-            chauffeurs:     selfAsChauffeur,
-            fournisseurLat: fLat,
-            fournisseurLon: fLon,
-          );
-
-          await ApiService.sendCommandeToPython(
-            id:     orderId,
-            lat:    (order['position']?['lat'] as num?)?.toDouble() ?? order['lat'] ?? 0.0,
-            lon:    (order['position']?['lon'] as num?)?.toDouble() ?? order['lon'] ?? 0.0,
-            demand: (order['quantity'] as num?)?.toDouble() ?? 0.0,
-          );
-
-          await ApiService.acceptCommandePython(orderId);
-
-          final optimResult = await ApiService.optimize();
-
-          if (optimResult['error'] == null && mounted) {
-            final dist  = (optimResult['distance_totale_km'] as num?)?.toStringAsFixed(1) ?? '?';
-            final valid = optimResult['valide'] as bool? ?? false;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('✓ Routes optimisées — $dist km${valid ? "" : " (invalide)"}'),
-              backgroundColor: const Color(0xFF1E3A8A),
-              duration: const Duration(seconds: 4),
-            ));
-          }
-        }
+        return;
       }
+
+      // Log NSGA-II result
+      final vrp = result['vrp'];
+      if (vrp != null) {
+        final dist  = vrp['distance_totale_km']?.toStringAsFixed(1) ?? '?';
+        final valid = vrp['valide'] as bool? ?? false;
+        debugPrint('✅ NSGA-II: $dist km — valide: $valid');
+      }
+
+      final order = orders.firstWhere(
+            (o) => o['id'] == orderId,
+        orElse: () => {},
+      );
+
+      setState(() {
+        final idx = orders.indexWhere((o) => o['id'] == orderId);
+        if (idx != -1) {
+          orders[idx]['status']    = 'accepted';
+          orders[idx]['rawStatus'] = 'en livraison';
+        }
+      });
+
+      if (!mounted) return;
+
+      final distLabel = vrp?['distance_totale_km'] != null
+          ? ' — ${(vrp['distance_totale_km'] as num).toStringAsFixed(1)} km'
+          : '';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('✅ Commande acceptée — NSGA-II$distLabel'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      ));
+
+      // Step 4 — navigate to map (no testOrders → real API mode)
+      final providerState =
+      context.findAncestorStateOfType<ProviderHomeScreenState>();
+      if (providerState != null) {
+        providerState.goToMapWithRoute(
+          commandeId: orderId,
+          destLat:    order['lat'],
+          destLon:    order['lon'],
+        );
+      } else {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProviderHomeScreen(
+              startOnline:      true,
+              activeCommandeId: orderId,
+              destinationLat:   order['lat'],
+              destinationLon:   order['lon'],
+            ),
+          ),
+              (route) => false,
+        );
+      }
+
     } catch (e) {
       _showError('Erreur réseau: $e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _acceptingOrderId = null);
     }
   }
 
-  // ── Refuse order ──────────────────────────────────────────
+  // ── REFUSE ORDER ──────────────────────────────────────────────
   Future<void> _refuseOrder(String orderId) async {
+    if (orderId.startsWith('test_')) {
+      setState(() {
+        final idx = orders.indexWhere((o) => o['id'] == orderId);
+        if (idx != -1) orders[idx]['status'] = 'refused';
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('[TEST] Commande refusée'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ));
+      }
+      return;
+    }
+
     try {
       final result = await ApiService.cancelCommande(orderId);
+      final errorMsg = result['error'] ??
+          (result['msg'] != null &&
+              result['msg'] != 'Commande annulée avec succès'
+              ? result['msg']
+              : null);
 
-      if (result['error'] != null) {
-        _showError(result['error']);
-      } else {
-        setState(() {
-          final idx = orders.indexWhere((o) => o['id'] == orderId);
-          if (idx != -1) orders[idx]['status'] = 'refused';
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Commande refusée'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 2),
-          ));
-        }
+      if (errorMsg != null) { _showError(errorMsg); return; }
+
+      setState(() {
+        final idx = orders.indexWhere((o) => o['id'] == orderId);
+        if (idx != -1) orders[idx]['status'] = 'refused';
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Commande refusée'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ));
       }
     } catch (e) {
       _showError('Erreur réseau: $e');
     }
   }
 
-  // ── Route optimization ────────────────────────────────────
+  // ── MANUAL NSGA-II OPTIMIZE (AppBar button) ───────────────────
   Future<void> _runOptimization() async {
     setState(() => _loading = true);
     try {
-      final chauffeurs     = await ApiService.getMyChauffeurs();
-      final acceptedOrders = orders.where((o) => o['status'] == 'accepted').toList();
-
-      final result = await ApiService.optimiseRoute({
-        'fournisseurId': ApiService.userId,
-        'chauffeurs':    chauffeurs,
-        'commandes':     acceptedOrders,
-      });
+      final result = await ApiService.optimize();
 
       if (result['error'] != null) {
-        _showError('Erreur optimisation: ${result['error']}');
+        _showError('Erreur: ${result['error']}');
       } else {
-        final dist  = (result['distance_totale_km'] as num?)?.toStringAsFixed(1) ?? '?';
+        final dist  = (result['distance_totale_km'] as num?)
+            ?.toStringAsFixed(1) ?? '?';
         final valid = result['valide'] as bool? ?? false;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('✓ Routes optimisées — $dist km total${valid ? "" : " (invalide)"}'),
+            content: Text(
+                '✓ NSGA-II — $dist km${valid ? "" : " (invalide)"}'),
             backgroundColor: const Color(0xFF1E3A8A),
             duration: const Duration(seconds: 4),
           ));
@@ -251,16 +426,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
         SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
-  // ── Filter ────────────────────────────────────────────────
   List<Map<String, dynamic>> get filteredOrders {
     if (selectedFilter == 'Toutes')     return orders;
     if (selectedFilter == 'En attente') return orders.where((o) => o['status'] == 'pending').toList();
     if (selectedFilter == 'Acceptées')  return orders.where((o) => o['status'] == 'accepted').toList();
     if (selectedFilter == 'Livrées')    return orders.where((o) => o['status'] == 'delivered').toList();
+    if (selectedFilter == 'Annulées')   return orders.where((o) => o['status'] == 'refused').toList();
     return orders;
   }
 
-  // ── BUILD ─────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -279,13 +453,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
           IconButton(
             icon: const Icon(Icons.alt_route),
             onPressed: _loading ? null : _runOptimization,
-            tooltip: 'Optimiser routes',
+            tooltip: 'NSGA-II Optimiser',
           ),
         ],
       ),
       body: Column(
         children: [
-          // Error banner
           if (_error != null)
             Container(
               width: double.infinity,
@@ -294,20 +467,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
               child: Row(children: [
                 const Icon(Icons.warning, color: Colors.deepOrange, size: 20),
                 const SizedBox(width: 8),
-                Expanded(child: Text(_error!,
-                    style: const TextStyle(color: Colors.deepOrange, fontSize: 13))),
-                TextButton(onPressed: _loadOrders, child: const Text('Réessayer')),
+                Expanded(
+                    child: Text(_error!,
+                        style: const TextStyle(
+                            color: Colors.deepOrange, fontSize: 13))),
+                TextButton(
+                    onPressed: _loadOrders,
+                    child: const Text('Réessayer')),
               ]),
             ),
 
-          // Loading bar
           if (_loading)
             const LinearProgressIndicator(
               backgroundColor: Color(0xFFBBDEFB),
               color: Color(0xFF1E3A8A),
             ),
 
-          // Filter chips
           Container(
             padding: const EdgeInsets.all(16),
             color: Colors.white,
@@ -321,14 +496,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 _buildFilterChip('Acceptées'),
                 const SizedBox(width: 5),
                 _buildFilterChip('Livrées'),
+                const SizedBox(width: 5),
+                _buildFilterChip('Annulées'),
               ]),
             ),
           ),
 
-          // Summary bar
           if (orders.isNotEmpty)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               color: Colors.white,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -349,7 +526,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
               ),
             ),
 
-          // Orders list
           Expanded(
             child: filteredOrders.isEmpty && !_loading
                 ? _buildEmptyState()
@@ -371,7 +547,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget _buildSummaryBadge(String label, int count, Color color) {
     return Column(children: [
       Text('$count',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+          style: TextStyle(
+              fontSize: 18, fontWeight: FontWeight.bold, color: color)),
       Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
     ]);
   }
@@ -389,7 +566,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
         child: Text(label,
             style: TextStyle(
               color: isSelected ? Colors.white : Colors.grey[700],
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontWeight:
+              isSelected ? FontWeight.bold : FontWeight.normal,
             )),
       ),
     );
@@ -400,6 +578,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final isAccepted  = order['status'] == 'accepted';
     final isDelivered = order['status'] == 'delivered';
     final isRefused   = order['status'] == 'refused';
+    final isAccepting = _acceptingOrderId == order['id'];
 
     Color    statusColor = Colors.orange;
     String   statusLabel = 'En attente';
@@ -415,90 +594,121 @@ class _OrdersScreenState extends State<OrdersScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border(left: BorderSide(color: statusColor, width: 4)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05),
-            blurRadius: 10, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Header
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Row(children: [
-              const Icon(Icons.person, color: Color(0xFF1E3A8A), size: 20),
-              const SizedBox(width: 8),
-              Text(order['clientName'],
-                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-            ]),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Row(children: [
-                Icon(statusIcon, color: statusColor, size: 14),
-                const SizedBox(width: 4),
-                Text(statusLabel,
-                    style: TextStyle(color: statusColor,
-                        fontSize: 12, fontWeight: FontWeight.bold)),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Row(children: [
+                  const Icon(Icons.person, color: Color(0xFF1E3A8A), size: 20),
+                  const SizedBox(width: 8),
+                  Text(order['clientName'],
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.bold)),
+                ]),
+                Container(
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Row(children: [
+                    Icon(statusIcon, color: statusColor, size: 14),
+                    const SizedBox(width: 4),
+                    Text(statusLabel,
+                        style: TextStyle(
+                            color: statusColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
+                  ]),
+                ),
               ]),
-            ),
-          ]),
-          const SizedBox(height: 10,),
+              const SizedBox(height: 10),
 
-          // Address
-          Row(children: [
-            Icon(Icons.location_on, color: Colors.red[400], size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(order['address'],
-                style: TextStyle(fontSize: 14, color: Colors.grey[700]))),
-          ]),
-          const SizedBox(height: 8),
+              Row(children: [
+                Icon(Icons.location_on, color: Colors.red[400], size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text(order['address'],
+                        style: TextStyle(
+                            fontSize: 14, color: Colors.grey[700]))),
+              ]),
+              const SizedBox(height: 8),
 
-          // Info chips
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  _buildInfoChip(
+                      Icons.water_drop, '${order['quantity']} L', Colors.blue),
+                  const SizedBox(width: 6),
+                  _buildInfoChip(
+                      Icons.route, '${order['distance']} km', Colors.orange),
+                  const SizedBox(width: 6),
+                  _buildInfoChip(
+                      Icons.timer, '${order['duration']} min', Colors.purple),
+                  const SizedBox(width: 6),
+                  _buildInfoChip(
+                      Icons.payments, '${order['price']} DA', Colors.green),
+                ]),
+              ),
 
-          Container(
-            padding: const EdgeInsets.all(1),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row( children: [
-              _buildInfoChip(Icons.water_drop, '${order['quantity']} L',   Colors.blue, ),
-              _buildInfoChip(Icons.route,      '${order['distance']} km',  Colors.orange),
-              _buildInfoChip(Icons.timer,      '${order['duration']} min', Colors.purple),
-              _buildInfoChip(Icons.payments,   '${order['price']} DA',     Colors.green),
+              if (isPending) ...[
+                const SizedBox(height: 16),
+                if (isAccepting)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Column(children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 8),
+                        Text('NSGA-II en cours...',
+                            style:
+                            TextStyle(fontSize: 12, color: Colors.grey)),
+                      ]),
+                    ),
+                  )
+                else
+                  Row(children: [
+                    Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _acceptOrder(order['id']),
+                          icon: const Icon(Icons.check, size: 20),
+                          label: const Text('Accepter'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            padding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        )),
+                    const SizedBox(width: 12),
+                    Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _refuseOrder(order['id']),
+                          icon: const Icon(Icons.close, size: 20),
+                          label: const Text('Refuser'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                            padding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        )),
+                  ]),
               ],
-            ),
-            ),
-          ),
-
-          // Action buttons (only for pending)
-          if (isPending) ...[
-            const SizedBox(height: 16),
-            Row(children: [
-              Expanded(child: ElevatedButton.icon(
-                onPressed: _loading ? null : () => _acceptOrder(order['id']),
-
-                icon: const Icon(Icons.check, size: 20),
-                label: const Text('Accepter'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green, foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: ElevatedButton.icon(
-                onPressed: _loading ? null : () => _refuseOrder(order['id']),
-                icon: const Icon(Icons.close, size: 20),
-                label: const Text('Refuser'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red, foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              )),
             ]),
-          ],
-        ]),
       ),
     );
   }
@@ -506,37 +716,46 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget _buildInfoChip(IconData icon, String label, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(color: color.withOpacity(0.1),
+      decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(8)),
       child: Row(children: [
         Icon(icon, color: color, size: 16),
         const SizedBox(width: 4),
-        Text(label, style: TextStyle(color: color, fontSize: 12,
-            fontWeight: FontWeight.bold)),
+        Text(label,
+            style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.bold)),
       ]),
     );
   }
 
   Widget _buildEmptyState() {
     return Center(
-      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(Icons.inbox_outlined, size: 80, color: Colors.grey[400]),
-        const SizedBox(height: 16),
-        Text('Aucune commande',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
-                color: Colors.grey[600])),
-        const SizedBox(height: 8),
-        Text('Les nouvelles demandes apparaîtront ici',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500])),
-        const SizedBox(height: 24),
-        ElevatedButton.icon(
-          onPressed: _loadOrders,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Rafraîchir'),
-          style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1E3A8A), foregroundColor: Colors.white),
-        ),
-      ]),
+      child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox_outlined, size: 80, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text('Aucune commande',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[600])),
+            const SizedBox(height: 8),
+            Text('Les nouvelles demandes apparaîtront ici',
+                style: TextStyle(fontSize: 14, color: Colors.grey[500])),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _loadOrders,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Rafraîchir'),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1E3A8A),
+                  foregroundColor: Colors.white),
+            ),
+          ]),
     );
   }
 }

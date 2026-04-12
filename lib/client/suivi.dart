@@ -12,7 +12,7 @@ import 'commandes.dart';
 import 'historique.dart';
 import 'profile.dart';
 import '../services/api_service.dart';
-import '../services/osrmservice.dart'; // ✅ OSRM import
+import '../services/osrmservice.dart';
 
 const List<Color> _routeColors = [
   Color(0xFF2196F3),
@@ -41,17 +41,17 @@ class _suiviState extends State<suivi> {
 
   Timer?  _refreshTimer;
   LatLng? _myPosition;
+  List<Map<String, dynamic>> _onlineFournisseurs = [];
 
   @override
   void initState() {
     super.initState();
     _loadSolution();
-    _loadOnlineFournisseurs(); // 👈
+    _loadOnlineFournisseurs();
     _startGpsTracking();
-    _refreshTimer = Timer.periodic(
-        const Duration(seconds: 30), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _loadSolution();
-      _loadOnlineFournisseurs(); // 👈 refresh every 30s too
+      _loadOnlineFournisseurs();
     });
   }
 
@@ -61,14 +61,8 @@ class _suiviState extends State<suivi> {
     super.dispose();
   }
 
-  List<Map<String, dynamic>> _onlineFournisseurs = [];
-
   Future<void> _loadOnlineFournisseurs() async {
     final list = await ApiService.getFournisseurs();
-    print('🔍 Total fournisseurs from API: ${list.length}');
-    for (var f in list) {
-      print('👤 ${f['nom']} | isOnline: ${f['isOnline']} | position: ${f['position']}');
-    }
     setState(() {
       _onlineFournisseurs = list
           .where((f) =>
@@ -78,14 +72,12 @@ class _suiviState extends State<suivi> {
           .map((f) => Map<String, dynamic>.from(f))
           .toList();
     });
-    print('✅ Online with position: ${_onlineFournisseurs.length}');
   }
-  // ── Load solution using OSRM ──────────────────────────────
+
   Future<void> _loadSolution() async {
     setState(() { _loadingRoutes = true; _routeError = null; });
 
     try {
-      // ✅ Get client's commandes that are en livraison
       final commandes = await ApiService.getMyCommandes();
       final accepted  = commandes.where((c) =>
       (c['status'] ?? '').toString() == 'en livraison').toList();
@@ -106,13 +98,11 @@ class _suiviState extends State<suivi> {
         final cmd   = accepted[i];
         final color = _routeColors[i % _routeColors.length];
 
-        // ✅ Client destination position
         final clientLat = (cmd['position']?['lat'] as num?)?.toDouble();
         final clientLon = (cmd['position']?['lon'] as num?)?.toDouble();
         if (clientLat == null || clientLon == null) continue;
         final clientPos = LatLng(clientLat, clientLon);
 
-        // ✅ Fournisseur position from populated fournisseur field
         final fourn    = cmd['fournisseur'];
         double? fournLat, fournLon;
         if (fourn is Map) {
@@ -123,13 +113,10 @@ class _suiviState extends State<suivi> {
         List<LatLng> routePoints;
         if (fournLat != null && fournLon != null) {
           final fournPos = LatLng(fournLat, fournLon);
-
-          // ✅ OSRM real road route
           routePoints = await OsrmService.getRoute(fournPos, clientPos);
           final dist  = await OsrmService.getDistanceAndDuration(fournPos, clientPos);
           totalDist  += dist['distance'] ?? 0.0;
 
-          // Fournisseur truck marker
           newMarkers.add(Marker(
             point: fournPos, width: 44, height: 44,
             child: Tooltip(
@@ -138,11 +125,9 @@ class _suiviState extends State<suivi> {
             ),
           ));
         } else {
-          // No fournisseur position yet — just show client marker
           routePoints = [clientPos];
         }
 
-        // Client home marker
         newMarkers.add(Marker(
           point: clientPos, width: 44, height: 55,
           child: Tooltip(
@@ -161,7 +146,6 @@ class _suiviState extends State<suivi> {
           ),
         ));
 
-        // ✅ OSRM real road polyline
         if (routePoints.length > 1) {
           newPolylines.add(Polyline(
             points:      routePoints,
@@ -189,7 +173,6 @@ class _suiviState extends State<suivi> {
     }
   }
 
-  // ── GPS tracking ──────────────────────────────────────────
   Future<void> _startGpsTracking() async {
     try {
       LocationPermission perm = await Geolocator.requestPermission();
@@ -220,12 +203,40 @@ class _suiviState extends State<suivi> {
     }
   }
 
-  // ── BUILD ─────────────────────────────────────────────────
+  // ── Nav Item Helper ──────────────────────────────────────
+  Widget _navItem(IconData icon, String label, VoidCallback onTap, {bool active = false}) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          icon: Icon(icon,
+            color: active ? const Color(0xFF4ECDC4) : Colors.white,
+            size: 20,
+          ),
+          onPressed: onTap,
+        ),
+        Text(label,
+          style: TextStyle(
+            fontSize: 8,
+            color: active ? const Color(0xFF4ECDC4) : Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final screenWidth  = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+
     return Scaffold(
       body: Stack(
         children: [
+
           // ── Map ─────────────────────────────────────────
           FlutterMap(
             mapController: mapController,
@@ -242,19 +253,20 @@ class _suiviState extends State<suivi> {
               MarkerLayer(markers: [
                 if (_myPosition != null)
                   Marker(
-                    point: _myPosition!, width: 40, height: 40,
+                    point: _myPosition!,
+                    width: screenWidth * 0.1,
+                    height: screenWidth * 0.1,
                     child: const Icon(Icons.my_location, color: Colors.blue, size: 36),
                   ),
 
-                // 👇 Online fournisseurs markers
                 ..._onlineFournisseurs.map((f) {
                   final lat = (f['position']['lat'] as num).toDouble();
                   final lon = (f['position']['lon'] as num).toDouble();
                   final nom = '${f['prenom'] ?? ''} ${f['nom'] ?? ''}'.trim();
                   return Marker(
                     point: LatLng(lat, lon),
-                    width: 60,
-                    height: 60,
+                    width: screenWidth * 0.15,
+                    height: screenWidth * 0.15,
                     child: Tooltip(
                       message: nom.isNotEmpty ? nom : 'Chauffeur',
                       child: Column(
@@ -283,20 +295,20 @@ class _suiviState extends State<suivi> {
             ],
           ),
 
-          // ── Loading ────────────────────────────────────
+          // ── Loading ──────────────────────────────────────
           if (_loadingRoutes)
             Positioned(
-              top: 60, left: 0, right: 0,
+              top: screenHeight * 0.07, left: 0, right: 0,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: screenWidth * 0.04,
+                    vertical: screenHeight * 0.01,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(20),
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black12, blurRadius: 8)
-                    ],
+                    boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8)],
                   ),
                   child: const Row(mainAxisSize: MainAxisSize.min, children: [
                     SizedBox(width: 16, height: 16,
@@ -308,38 +320,40 @@ class _suiviState extends State<suivi> {
               ),
             ),
 
-          // ── Error ──────────────────────────────────────
+          // ── Error ────────────────────────────────────────
           if (_routeError != null && !_loadingRoutes)
             Positioned(
-              top: 60, left: 16, right: 16,
+              top: screenHeight * 0.07,
+              left: screenWidth * 0.04,
+              right: screenWidth * 0.04,
               child: Container(
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.all(screenWidth * 0.03),
                 decoration: BoxDecoration(
                     color: Colors.orange.shade100,
                     borderRadius: BorderRadius.circular(12)),
                 child: Row(children: [
-                  const Icon(Icons.info_outline,
-                      color: Colors.deepOrange, size: 18),
+                  const Icon(Icons.info_outline, color: Colors.deepOrange, size: 18),
                   const SizedBox(width: 8),
                   Expanded(child: Text(_routeError!,
-                      style: const TextStyle(
-                          color: Colors.deepOrange, fontSize: 13))),
+                      style: const TextStyle(color: Colors.deepOrange, fontSize: 13))),
                   TextButton(
                     onPressed: _loadSolution,
-                    child: const Text('Réessayer',
-                        style: TextStyle(fontSize: 12)),
+                    child: const Text('Réessayer', style: TextStyle(fontSize: 12)),
                   ),
                 ]),
               ),
             ),
 
-          // ── Distance badge ─────────────────────────────
+          // ── Distance badge ────────────────────────────────
           if (_totalDistance != null)
             Positioned(
-              top: 60, left: 16,
+              top: screenHeight * 0.07,
+              left: screenWidth * 0.04,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 8),
+                padding: EdgeInsets.symmetric(
+                  horizontal: screenWidth * 0.03,
+                  vertical: screenHeight * 0.01,
+                ),
                 decoration: BoxDecoration(
                     color: const Color(0xFF0B3C49),
                     borderRadius: BorderRadius.circular(12)),
@@ -353,22 +367,25 @@ class _suiviState extends State<suivi> {
               ),
             ),
 
-          // ── My location FAB ────────────────────────────
+          // ── My location FAB ───────────────────────────────
           Positioned(
-            bottom: 110, right: 16,
+            bottom: screenHeight * 0.13,
+            right: screenWidth * 0.04,
             child: FloatingActionButton.small(
-              heroTag: 'location', backgroundColor: Colors.white,
+              heroTag: 'location',
+              backgroundColor: Colors.white,
               onPressed: _goToMyLocation,
-              child: const Icon(Icons.my_location,
-                  color: Color(0xFF0B3C49)),
+              child: const Icon(Icons.my_location, color: Color(0xFF0B3C49)),
             ),
           ),
 
-          // ── Refresh FAB ────────────────────────────────
+          // ── Refresh FAB ───────────────────────────────────
           Positioned(
-            bottom: 160, right: 16,
+            bottom: screenHeight * 0.19,
+            right: screenWidth * 0.04,
             child: FloatingActionButton.small(
-              heroTag: 'refresh', backgroundColor: Colors.white,
+              heroTag: 'refresh',
+              backgroundColor: Colors.white,
               onPressed: _loadSolution,
               child: const Icon(Icons.refresh, color: Color(0xFF0B3C49)),
             ),
@@ -386,61 +403,31 @@ class _suiviState extends State<suivi> {
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
       bottomNavigationBar: BottomAppBar(
-        notchMargin: 8, height: 90, color: const Color(0xFF0B3C49),
-        child: Row(children: [
-          Column(mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min, children: [
-                IconButton(
-                    icon: const Icon(CupertinoIcons.map,
-                        color: Colors.white, size: 20),
-                    onPressed: () {}),
-                const Text('suivi',
-                    style: TextStyle(fontSize: 10, color: Colors.white)),
-              ]),
-          const SizedBox(width: 35),
-          Column(mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min, children: [
-                IconButton(
-                  icon: const Icon(CupertinoIcons.cube_box_fill,
-                      color: Colors.white, size: 20),
-                  onPressed: () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => commandes(
-                        clientId: int.tryParse(
-                            ApiService.userId ?? '1') ?? 1,
-                      ))),
-                ),
-                const Text('commandes',
-                    style: TextStyle(fontSize: 8,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white)),
-              ]),
-          const SizedBox(width: 25),
-          Column(mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min, children: [
-                IconButton(
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  icon: const Icon(CupertinoIcons.clock,
-                      color: Colors.white, size: 20),
-                  onPressed: () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => historique())),
-                ),
-                const Text('historique',
-                    style: TextStyle(color: Colors.white, fontSize: 8)),
-              ]),
-          const SizedBox(width: 22, height: 80),
-          Column(mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min, children: [
-                IconButton(
-                  icon: const Icon(CupertinoIcons.profile_circled,
-                      color: Colors.white, size: 20),
-                  onPressed: () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => profile())),
-                ),
-                const Text('profile',
-                    style: TextStyle(color: Colors.white, fontSize: 10)),
-              ]),
-        ]),
+        notchMargin: 8,
+        height: screenHeight * 0.1,
+        color: const Color(0xFF0B3C49),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _navItem(CupertinoIcons.map, 'suivi', () {}, active: true),
+            SizedBox(width: screenWidth * 0.08),
+            _navItem(CupertinoIcons.cube_box_fill, 'commandes', () =>
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => commandes(
+                    clientId: int.tryParse(ApiService.userId ?? '1') ?? 1,
+                  ),
+                )),
+            ),
+            SizedBox(width: screenWidth * 0.06),
+            _navItem(CupertinoIcons.clock, 'historique', () =>
+                Navigator.push(context, MaterialPageRoute(builder: (_) => historique())),
+            ),
+            SizedBox(width: screenWidth * 0.05),
+            _navItem(CupertinoIcons.profile_circled, 'profile', () =>
+                Navigator.push(context, MaterialPageRoute(builder: (_) => profile())),
+            ),
+          ],
+        ),
       ),
     );
   }

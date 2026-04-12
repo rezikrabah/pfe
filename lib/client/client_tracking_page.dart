@@ -25,30 +25,25 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   final MapController _mapController = MapController();
   Timer? _timer;
 
-  // Données de tracking
-  String _statut = 'en_attente';
-  LatLng? _driverPos;
-  LatLng? _destination;
+  String       _statut      = 'en_attente';
+  LatLng?      _driverPos;
+  LatLng?      _destination;
   List<LatLng> _routePoints = [];
 
-  // Métriques de livraison
-  double? _distanceKm;
-  double? _durationMin;
-  String? _driverName;
-  String? _driverPhone;
+  double?   _distanceKm;
+  double?   _durationMin;
+  String?   _driverName;
+  String?   _driverPhone;
   DateTime? _lastDriverUpdate;
-
-  // État UI
-  bool _loading = true;
+  bool    _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     _fetchTracking();
-    // Rafraîchissement toutes les 10 secondes
     _timer = Timer.periodic(
-      const Duration(seconds: 30),
+      const Duration(seconds: 60),
           (_) => _fetchTracking(),
     );
   }
@@ -60,7 +55,6 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     super.dispose();
   }
 
-  /// Récupère les données de tracking depuis le backend
   Future<void> _fetchTracking() async {
     try {
       final res = await http.get(
@@ -77,55 +71,56 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       }
 
       if (res.statusCode != 200) {
-        setState(() {
-          _error = 'Erreur serveur (${res.statusCode})';
-          _loading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _error   = 'Erreur serveur (${res.statusCode})';
+            _loading = false;
+          });
+        }
         return;
       }
 
       final data = jsonDecode(res.body);
       await _applyTrackingData(data);
-
     } catch (e) {
-      print('Erreur tracking: $e');
       await _fetchCommandeStatus();
     }
   }
 
-  /// Fallback: récupère juste le statut si le endpoint /track échoue
   Future<void> _fetchCommandeStatus() async {
     try {
       final commandes = await ApiService.getMyCommandes();
-      final commande = commandes.firstWhere(
+      final commande  = commandes.firstWhere(
             (c) => (c['_id'] ?? c['id']).toString() == widget.commandeId,
         orElse: () => {},
       );
 
+      if (!mounted) return;
+
       if (commande.isNotEmpty) {
+        final normalized = _normalizeStatus(commande['status'] ?? 'en attente');
         setState(() {
-          _statut = _normalizeStatus(commande['status'] ?? 'en attente');
+          _statut  = normalized;
           _loading = false;
-          _error = null;
+          _error   = null;
         });
+        // Stop polling if final status
+        if (normalized == 'refusee' || normalized == 'livree') {
+          _timer?.cancel();
+        }
       } else {
-        setState(() {
-          _loading = false;
-          _statut = 'en_attente';
-        });
+        setState(() { _loading = false; _statut = 'en_attente'; });
       }
     } catch (e) {
-      setState(() {
-        _error = 'Connexion impossible';
-        _loading = false;
-      });
+      if (!mounted) return;
+      setState(() { _error = 'Connexion impossible'; _loading = false; });
     }
   }
 
-  /// Applique les données de tracking avec calcul de route OSRM
   Future<void> _applyTrackingData(Map<String, dynamic> data) async {
-    print('TRACKING DATA COMPLET: ${jsonEncode(data)}');
-    // ✅ Position chauffeur (format: data['driver']['lat'])
+    final rawStatus = (data['statut'] ?? 'en attente').toString();
+    final statut    = _normalizeStatus(rawStatus);
+
     LatLng? driverPos;
     if (data['driver_lat'] != null && data['driver_lon'] != null) {
       driverPos = LatLng(
@@ -133,11 +128,10 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
         (data['driver_lon'] as num).toDouble(),
       );
       _lastDriverUpdate = data['lastUpdate'] != null
-          ? DateTime.tryParse(data['lastUpdate'])
+          ? DateTime.tryParse(data['lastUpdate'].toString())
           : null;
     }
 
-    // ✅ Destination
     LatLng? destination;
     final dest = data['destination'];
     if (dest != null && dest['lat'] != null && dest['lon'] != null) {
@@ -147,157 +141,183 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       );
     }
 
-    // ✅ Calcul de la route
     List<LatLng> routePoints = [];
+    double?      distanceKm;
+    double?      durationMin;
 
-    // Option 1: Route précalculée du backend (polyline)
-    if (data['route'] != null && data['route'].toString().isNotEmpty) {
-      routePoints = _decodePolyline(data['route']);
-    }
-    // Option 2: Calcul local avec OSRM (GeoJSON)
-    else if (driverPos != null && destination != null) {
+    if (driverPos != null && destination != null) {
       try {
-        routePoints = await OsrmService.getRoute(driverPos, destination);
+        final result = await OsrmService.getRouteWithMetrics(driverPos, destination);
+        routePoints = result['points']      as List<LatLng>;
+        distanceKm  = result['distanceKm']  as double?;
+        durationMin = result['durationMin'] as double?;
       } catch (e) {
-        print('OSRM local error: $e');
         routePoints = [driverPos, destination];
       }
     }
 
-    // ✅ Métriques
-    double? distanceKm;
-    double? durationMin;
+    String? driverName;
+    String? driverPhone;
+    final chauffeur   = data['chauffeur'];
+    final fournisseur = data['fournisseur'];
 
-    if (data['estimatedDistance'] != null) {
-      distanceKm = (data['estimatedDistance'] as num) / 1000;
-    }
-    if (data['estimatedDuration'] != null) {
-      durationMin = (data['estimatedDuration'] as num) / 60;
+    if (chauffeur != null && chauffeur['nom'] != null) {
+      driverName  = chauffeur['nom'];
+      driverPhone = chauffeur['telephone'];
+    } else if (fournisseur != null) {
+      driverName = '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'.trim();
+      if (driverName!.isEmpty) driverName = null;
     }
 
-    // ✅ Infos chauffeur
-    final chauffeur = data['chauffeur'];
-    final driverName = chauffeur?['nom'];
-    final driverPhone = chauffeur?['telephone'];
+    if (!mounted) return;
 
     setState(() {
-      _error = null;
-      _loading = false;
-      _statut = _normalizeStatus(data['statut'] ?? 'en_attente');
-      _driverPos = driverPos;
-      _destination = destination;
-      _routePoints = routePoints;
-      _distanceKm = distanceKm;
-      _durationMin = durationMin;
-      _driverName = driverName;
-      _driverPhone = driverPhone;
+      _error        = null;
+      _loading      = false;
+      _statut       = statut;
+      _driverPos    = driverPos;
+      _destination  = destination;
+      _routePoints  = routePoints;
+      _distanceKm   = distanceKm;
+      _durationMin  = durationMin;
+      _driverName   = driverName;
+      _driverPhone  = driverPhone;
     });
 
-    // Centrer la carte sur le chauffeur si disponible
-    if (_driverPos != null) {
-      _mapController.move(_driverPos!, 15);
-    } else if (_destination != null) {
-      _mapController.move(_destination!, 14);
+    // Stop polling if final status
+    if (statut == 'refusee' || statut == 'livree') {
+      _timer?.cancel();
+    }
+
+    if (driverPos != null && destination != null && routePoints.length > 1) {
+      final bounds = LatLngBounds.fromPoints([driverPos, destination]);
+      _mapController.fitBounds(bounds,
+          options: const FitBoundsOptions(padding: EdgeInsets.all(80)));
+    } else if (driverPos != null) {
+      _mapController.move(driverPos, 15);
+    } else if (destination != null) {
+      _mapController.move(destination, 14);
     }
   }
 
-  /// Décode une polyline encodée (format OSRM standard)
-  List<LatLng> _decodePolyline(String encoded) {
-    List<LatLng> points = [];
-    int index = 0, len = encoded.length;
-    int lat = 0, lng = 0;
-
-    while (index < len) {
-      int b, shift = 0, result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.add(LatLng(lat / 1E5, lng / 1E5));
-    }
-    return points;
-  }
-
-  /// Normalise les statuts backend vers UI
   String _normalizeStatus(String status) {
-    switch (status.toLowerCase()) {
-      case 'en attente':
-        return 'en_attente';
-      case 'en livraison':
-        return 'assignee';
+    switch (status.trim().toLowerCase()) {
+      case 'en attente':   return 'en_attente';
+      case 'en livraison': return 'assignee';
       case 'livrée':
-        return 'livree';
+      case 'livree':       return 'livree';
       case 'annulée':
-        return 'refusee';
-      default:
-        return 'en_attente';
+      case 'annulee':
+      case 'refusee':
+      case 'refusée':      return 'refusee';
+      default:             return 'en_attente';
     }
   }
 
-  /// Couleur selon le statut
   Color get _statusColor {
     switch (_statut) {
-      case 'en_attente':
-        return Colors.orange;
-      case 'acceptee':
-        return Colors.blue;
-      case 'assignee':
-        return const Color(0xFF9C27B0);
-      case 'livree':
-        return Colors.green;
-      case 'refusee':
-        return Colors.red;
-      default:
-        return Colors.grey;
+      case 'en_attente': return Colors.orange;
+      case 'acceptee':   return Colors.blue;
+      case 'assignee':   return const Color(0xFF9C27B0);
+      case 'livree':     return Colors.green;
+      case 'refusee':    return Colors.red;
+      default:           return Colors.grey;
     }
   }
 
-  /// Label lisible selon le statut
   String get _statusLabel {
     switch (_statut) {
-      case 'en_attente':
-        return '⏳ En attente de confirmation';
-      case 'acceptee':
-        return '✅ Commande acceptée';
-      case 'assignee':
-        return '🚚 Livreur en route';
-      case 'livree':
-        return '🎉 Livraison effectuée !';
-      case 'refusee':
-        return '❌ Commande refusée';
-      default:
-        return _statut;
+      case 'en_attente': return '⏳ En attente de confirmation';
+      case 'acceptee':   return '✅ Commande acceptée';
+      case 'assignee':   return '🚚 Livreur en route';
+      case 'livree':     return '🎉 Livraison effectuée !';
+      case 'refusee':    return '❌ Commande refusée';
+      default:           return _statut;
     }
   }
 
-  /// Formate le temps écoulé depuis la dernière position
   String? _getLastUpdateText() {
     if (_lastDriverUpdate == null) return null;
     final diff = DateTime.now().difference(_lastDriverUpdate!);
-    if (diff.inMinutes < 1) return 'À l\'instant';
+    if (diff.inMinutes < 1)  return 'À l\'instant';
     if (diff.inMinutes < 60) return 'Il y a ${diff.inMinutes} min';
     return 'Il y a ${diff.inHours} h';
   }
 
+  // ── Final status screen (refused or delivered) ────────────────
+  Widget _buildFinalScreen() {
+    final isDelivered = _statut == 'livree';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                color: (isDelivered ? Colors.green : Colors.red).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isDelivered ? Icons.check_circle : Icons.cancel,
+                size: 80,
+                color: isDelivered ? Colors.green : Colors.red,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              _statusLabel,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: isDelivered ? Colors.green : Colors.red,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              isDelivered
+                  ? 'Votre commande a été livrée avec succès.'
+                  : 'Votre commande a été refusée par le fournisseur.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('Retour'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0B3C49),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final screenWidth  = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Commande #${widget.commandeId.substring(0, 8)}...'),
+        title: Text(
+          'Commande #${widget.commandeId.substring(0, 8)}...',
+          style: TextStyle(fontSize: screenWidth * 0.04),
+        ),
         backgroundColor: const Color(0xFF0B3C49),
         foregroundColor: Colors.white,
         actions: [
@@ -309,9 +329,12 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : (_statut == 'refusee' || _statut == 'livree')
+          ? _buildFinalScreen()
           : Stack(
         children: [
-          // ── Carte ──────────────────────────────────────
+
+          // ── Map ──────────────────────────────────
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -326,211 +349,184 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.yourname.waterdelivery',
               ),
-
-              // Route OSRM (ligne bleue)
               if (_routePoints.length > 1)
                 PolylineLayer(
                   polylines: [
                     Polyline(
-                      points: _routePoints,
-                      color: const Color(0xFF2979FF),
-                      strokeWidth: 5,
+                      points:            _routePoints,
+                      color:             const Color(0xFF2979FF),
+                      strokeWidth:       5,
                       borderStrokeWidth: 2,
-                      borderColor: Colors.white,
+                      borderColor:       Colors.white,
                     ),
                   ],
                 ),
-
-              // Marqueurs
               MarkerLayer(
                 markers: [
-                  // Chauffeur (camion)
                   if (_driverPos != null)
                     Marker(
-                      point: _driverPos!,
-                      width: 60,
-                      height: 60,
+                      point:  _driverPos!,
+                      width:  screenWidth * 0.15,
+                      height: screenWidth * 0.15,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
+                          color:  Colors.red,
+                          shape:  BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 3),
                           boxShadow: const [
                             BoxShadow(
-                              color: Colors.black26,
+                              color:      Colors.black26,
                               blurRadius: 8,
-                              offset: Offset(0, 4),
+                              offset:     Offset(0, 4),
                             ),
                           ],
                         ),
-                        child: const Icon(
-                          Icons.local_shipping,
-                          color: Colors.white,
-                          size: 28,
-                        ),
+                        child: Icon(Icons.local_shipping,
+                            color: Colors.white,
+                            size: screenWidth * 0.07),
                       ),
                     ),
-
-                  // Destination (client)
                   if (_destination != null)
                     Marker(
-                      point: _destination!,
-                      width: 50,
-                      height: 60,
-                      child: const Icon(
-                        Icons.location_on,
-                        color: Colors.green,
-                        size: 45,
-                      ),
+                      point:  _destination!,
+                      width:  screenWidth * 0.13,
+                      height: screenWidth * 0.15,
+                      child: Icon(Icons.location_on,
+                          color: Colors.green,
+                          size: screenWidth * 0.11),
                     ),
                 ],
               ),
             ],
           ),
 
-          // ── Panel d'information ─────────────────────────
+          // ── Status card ───────────────────────────
           Positioned(
-            top: 16,
-            left: 16,
-            right: 16,
+            top: screenHeight * 0.02,
+            left: screenWidth * 0.04,
+            right: screenWidth * 0.04,
             child: Card(
               elevation: 8,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+                  borderRadius: BorderRadius.circular(16)),
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.all(screenWidth * 0.04),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Statut
-                    Row(
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: _statusColor,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _statusLabel,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        if (_statut == 'assignee')
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Color(0xFF9C27B0),
-                            ),
-                          ),
-                      ],
-                    ),
 
-                    // Info chauffeur
-                    if (_driverName != null) ...[
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor: Colors.grey.shade200,
-                            radius: 18,
-                            child: const Icon(
-                              Icons.person,
-                              color: Colors.grey,
-                              size: 20,
-                            ),
+                    // Status row
+                    Row(children: [
+                      Container(
+                        width:  screenWidth * 0.03,
+                        height: screenWidth * 0.03,
+                        decoration: BoxDecoration(
+                          color: _statusColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      SizedBox(width: screenWidth * 0.025),
+                      Expanded(
+                        child: Text(
+                          _statusLabel,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: screenWidth * 0.035,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
+                        ),
+                      ),
+                      if (_statut == 'assignee')
+                        SizedBox(
+                          width:  screenWidth * 0.04,
+                          height: screenWidth * 0.04,
+                          child: const CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF9C27B0),
+                          ),
+                        ),
+                    ]),
+
+                    // Driver info
+                    if (_driverName != null) ...[
+                      SizedBox(height: screenHeight * 0.015),
+                      Row(children: [
+                        CircleAvatar(
+                          backgroundColor: Colors.grey.shade200,
+                          radius: screenWidth * 0.045,
+                          child: Icon(Icons.person,
+                              color: Colors.grey,
+                              size: screenWidth * 0.05),
+                        ),
+                        SizedBox(width: screenWidth * 0.03),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _driverName!,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: screenWidth * 0.035,
+                                ),
+                              ),
+                              if (_driverPhone != null)
                                 Text(
-                                  _driverName!,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
+                                  _driverPhone!,
+                                  style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontSize: screenWidth * 0.03,
                                   ),
                                 ),
-                                if (_driverPhone != null)
-                                  Text(
-                                    _driverPhone!,
-                                    style: TextStyle(
-                                      color: Colors.grey.shade600,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                              ],
-                            ),
+                            ],
                           ),
-                          if (_driverPhone != null)
-                            IconButton(
-                              icon: const Icon(
-                                Icons.phone,
+                        ),
+                        if (_driverPhone != null)
+                          IconButton(
+                            icon: Icon(Icons.phone,
                                 color: Colors.green,
-                              ),
-                              onPressed: () {
-                                // TODO: launchUrl(Uri.parse('tel:$_driverPhone'))
-                              },
-                            ),
-                        ],
-                      ),
+                                size: screenWidth * 0.055),
+                            onPressed: () {},
+                          ),
+                      ]),
                     ],
 
-                    // Distance et temps estimé
+                    // Distance & duration
                     if (_distanceKm != null && _durationMin != null) ...[
-                      const SizedBox(height: 12),
+                      SizedBox(height: screenHeight * 0.015),
                       const Divider(height: 1),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
+                      SizedBox(height: screenHeight * 0.015),
+                      Row(children: [
+                        Expanded(
+                          child: _buildMetricTile(
+                            icon:  Icons.route,
+                            value: '${_distanceKm!.toStringAsFixed(1)} km',
+                            label: 'Distance',
+                            screenWidth: screenWidth,
+                          ),
+                        ),
+                        Container(height: 30, width: 1, color: Colors.grey.shade300),
+                        Expanded(
+                          child: _buildMetricTile(
+                            icon:  Icons.access_time,
+                            value: '${_durationMin!.round()} min',
+                            label: 'Temps estimé',
+                            screenWidth: screenWidth,
+                          ),
+                        ),
+                        if (_getLastUpdateText() != null) ...[
+                          Container(height: 30, width: 1, color: Colors.grey.shade300),
                           Expanded(
                             child: _buildMetricTile(
-                              icon: Icons.route,
-                              value: '${_distanceKm!.toStringAsFixed(1)} km',
-                              label: 'Distance',
+                              icon:      Icons.update,
+                              value:     _getLastUpdateText()!,
+                              label:     'Mise à jour',
+                              iconColor: Colors.orange,
+                              screenWidth: screenWidth,
                             ),
                           ),
-                          Container(
-                            height: 30,
-                            width: 1,
-                            color: Colors.grey.shade300,
-                          ),
-                          Expanded(
-                            child: _buildMetricTile(
-                              icon: Icons.access_time,
-                              value: '${_durationMin!.round()} min',
-                              label: 'Temps estimé',
-                            ),
-                          ),
-                          if (_getLastUpdateText() != null) ...[
-                            Container(
-                              height: 30,
-                              width: 1,
-                              color: Colors.grey.shade300,
-                            ),
-                            Expanded(
-                              child: _buildMetricTile(
-                                icon: Icons.update,
-                                value: _getLastUpdateText()!,
-                                label: 'Mise à jour',
-                                iconColor: Colors.orange,
-                              ),
-                            ),
-                          ],
                         ],
-                      ),
+                      ]),
                     ],
                   ],
                 ),
@@ -538,15 +534,15 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
             ),
           ),
 
-          // ── Message d'attente ────────────────────────────
-          if (_driverPos == null &&
-              (_statut == 'en_attente' || _statut == 'acceptee'))
+          // ── Waiting overlay ───────────────────────
+          if (_statut == 'en_attente')
             Center(
               child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 32),
-                padding: const EdgeInsets.all(24),
+                margin: EdgeInsets.symmetric(
+                    horizontal: screenWidth * 0.08),
+                padding: EdgeInsets.all(screenWidth * 0.06),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color:        Colors.white,
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
                     BoxShadow(color: Colors.black12, blurRadius: 12)
@@ -555,125 +551,139 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      _statut == 'en_attente'
-                          ? Icons.hourglass_top
-                          : Icons.check_circle_outline,
-                      size: 52,
-                      color: _statusColor,
-                    ),
-                    const SizedBox(height: 12),
+                    Icon(Icons.hourglass_top,
+                        size: screenWidth * 0.13,
+                        color: _statusColor),
+                    SizedBox(height: screenHeight * 0.015),
                     Text(
-                      _statut == 'en_attente'
-                          ? 'En attente d\'acceptation\npar le fournisseur'
-                          : 'Commande acceptée.\nAssignation du livreur en cours...',
+                      'En attente d\'acceptation\npar le fournisseur',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 15),
+                      style: TextStyle(fontSize: screenWidth * 0.038),
                     ),
                   ],
                 ),
               ),
             ),
 
-          // ── Boutons de contrôle ─────────────────────────
+          // ── En livraison overlay ──────────────────
+          if (_statut == 'assignee' && _driverPos == null)
+            Positioned(
+              bottom: screenHeight * 0.22,
+              left: screenWidth * 0.04,
+              right: screenWidth * 0.04,
+              child: Container(
+                padding: EdgeInsets.all(screenWidth * 0.04),
+                decoration: BoxDecoration(
+                  color:        Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black12, blurRadius: 8)
+                  ],
+                ),
+                child: Row(children: [
+                  Icon(Icons.local_shipping,
+                      color: const Color(0xFF9C27B0),
+                      size: screenWidth * 0.06),
+                  SizedBox(width: screenWidth * 0.03),
+                  Expanded(
+                    child: Text(
+                      'Votre commande est en livraison.\nLocalisation du livreur en cours...',
+                      style: TextStyle(fontSize: screenWidth * 0.033),
+                    ),
+                  ),
+                  SizedBox(
+                    width:  screenWidth * 0.05,
+                    height: screenWidth * 0.05,
+                    child: const CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(0xFF9C27B0)),
+                  ),
+                ]),
+              ),
+            ),
+
+          // ── Control FABs ──────────────────────────
           Positioned(
-            bottom: 100,
-            right: 16,
+            bottom: screenHeight * 0.12,
+            right: screenWidth * 0.04,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Centrer sur chauffeur
                 if (_driverPos != null)
                   FloatingActionButton.small(
-                    heroTag: 'center_driver',
-                    onPressed: () {
-                      _mapController.move(_driverPos!, 16);
-                    },
+                    heroTag:         'center_driver',
                     backgroundColor: Colors.white,
-                    child: const Icon(
-                      Icons.local_shipping,
-                      color: Colors.red,
-                    ),
+                    onPressed: () => _mapController.move(_driverPos!, 16),
+                    child: Icon(Icons.local_shipping,
+                        color: Colors.red,
+                        size: screenWidth * 0.05),
                   ),
-                if (_driverPos != null) const SizedBox(height: 8),
-
-                // Centrer sur destination
+                if (_driverPos != null)
+                  SizedBox(height: screenHeight * 0.01),
                 if (_destination != null)
                   FloatingActionButton.small(
-                    heroTag: 'center_dest',
-                    onPressed: () {
-                      _mapController.move(_destination!, 16);
-                    },
+                    heroTag:         'center_dest',
                     backgroundColor: Colors.white,
-                    child: const Icon(
-                      Icons.location_on,
-                      color: Colors.green,
-                    ),
+                    onPressed: () => _mapController.move(_destination!, 16),
+                    child: Icon(Icons.location_on,
+                        color: Colors.green,
+                        size: screenWidth * 0.05),
                   ),
-                if (_destination != null) const SizedBox(height: 8),
-
-                // Voir tout l'itinéraire
+                if (_destination != null)
+                  SizedBox(height: screenHeight * 0.01),
                 FloatingActionButton(
-                  heroTag: 'fit_bounds',
+                  heroTag:         'fit_bounds',
+                  backgroundColor: const Color(0xFF0B3C49),
                   onPressed: () {
                     if (_driverPos != null && _destination != null) {
-                      final bounds = LatLngBounds.fromPoints([
-                        _driverPos!,
-                        _destination!,
-                      ]);
-                      _mapController.fitBounds(
-                        bounds,
-                        options: const FitBoundsOptions(
-                          padding: EdgeInsets.all(100),
-                        ),
-                      );
+                      final bounds = LatLngBounds.fromPoints(
+                          [_driverPos!, _destination!]);
+                      _mapController.fitBounds(bounds,
+                          options: const FitBoundsOptions(
+                              padding: EdgeInsets.all(100)));
+                    } else if (_destination != null) {
+                      _mapController.move(_destination!, 14);
                     }
                   },
-                  backgroundColor: const Color(0xFF0B3C49),
-                  child: const Icon(Icons.center_focus_strong),
+                  child: Icon(Icons.center_focus_strong,
+                      size: screenWidth * 0.06),
                 ),
               ],
             ),
           ),
 
-          // ── Erreur ───────────────────────────────────────
+          // ── Error banner ──────────────────────────
           if (_error != null)
             Positioned(
-              bottom: 20,
-              left: 16,
-              right: 16,
+              bottom: screenHeight * 0.025,
+              left: screenWidth * 0.04,
+              right: screenWidth * 0.04,
               child: Container(
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.all(screenWidth * 0.03),
                 decoration: BoxDecoration(
-                  color: Colors.orange.shade100,
+                  color:        Colors.orange.shade100,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.wifi_off,
+                child: Row(children: [
+                  Icon(Icons.wifi_off,
                       color: Colors.deepOrange,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(
-                          color: Colors.deepOrange,
-                          fontSize: 13,
-                        ),
+                      size: screenWidth * 0.045),
+                  SizedBox(width: screenWidth * 0.02),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Colors.deepOrange,
+                        fontSize: screenWidth * 0.033,
                       ),
                     ),
-                    TextButton(
-                      onPressed: _fetchTracking,
-                      child: const Text(
-                        'Réessayer',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                  TextButton(
+                    onPressed: _fetchTracking,
+                    child: Text('Réessayer',
+                        style: TextStyle(fontSize: screenWidth * 0.03)),
+                  ),
+                ]),
               ),
             ),
         ],
@@ -681,39 +691,33 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     );
   }
 
-  /// Widget helper pour les métriques (distance, temps, etc.)
   Widget _buildMetricTile({
     required IconData icon,
-    required String value,
-    required String label,
-    Color? iconColor,
+    required String   value,
+    required String   label,
+    required double   screenWidth,
+    Color?            iconColor,
   }) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(
-          icon,
-          size: 16,
-          color: iconColor ?? Colors.grey.shade600,
-        ),
-        const SizedBox(width: 6),
+        Icon(icon,
+            size: screenWidth * 0.04,
+            color: iconColor ?? Colors.grey.shade600),
+        SizedBox(width: screenWidth * 0.015),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
-            ),
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 10,
-              ),
-            ),
+            Text(value,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: screenWidth * 0.033,
+                )),
+            Text(label,
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontSize: screenWidth * 0.025,
+                )),
           ],
         ),
       ],
