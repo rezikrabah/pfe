@@ -12,6 +12,14 @@ import 'profile_screen.dart';
 import '../services/api_service.dart';
 import '../services/osrmservice.dart';
 
+// ─────────────────────────────────────────────────────────────────
+// DEBUG HELPER
+// All route-algorithm logs are prefixed [ROUTE] so you can filter
+// them easily in the Flutter console:
+//   flutter logs | grep '\[ROUTE\]'
+// ─────────────────────────────────────────────────────────────────
+void _log(String msg) => debugPrint('[ROUTE] $msg');
+
 class ProviderHomeScreen extends StatefulWidget {
   final bool    isGerant;
   final bool    startOnline;
@@ -47,26 +55,20 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   double _capacityLiters  = 0;
   bool   _loadingCapacity = true;
 
-  // Map display
   List<Polyline> _polylines     = [];
   List<Marker>   _markers       = [];
   bool           _loadingRoutes = false;
 
-  // Optimized route info shown in bottom sheet
   List<_RouteStop> _optimizedStops = [];
   double?          _totalDistanceKm;
   bool             _routeIsValid   = false;
 
-  // Local test orders
   List<Map<String, dynamic>> _testOrders = [];
 
   StreamSubscription<Position>? _gpsSub;
   Timer?                        _gpsUploadTimer;
 
-  // ─────────────────────────────────────────────────────────
-  // SIMULATION STATE
-  // ─────────────────────────────────────────────────────────
-
+  // ── Simulation state ────────────────────────────────────────────
   List<LatLng> _fullRoutePoints = [];
   int  _simIndex   = 0;
   bool _simRunning = false;
@@ -92,6 +94,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     super.initState();
     if (widget.testOrders.isNotEmpty) {
       _testOrders = List<Map<String, dynamic>>.from(widget.testOrders);
+      _log('initState: ${_testOrders.length} test orders loaded from widget');
     }
     _loadCapacity();
     _startGps();
@@ -116,10 +119,14 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     required double? destLon,
     List<Map<String, dynamic>>? testOrders,
   }) {
+    _log('goToMapWithRoute: commandeId=$commandeId  testOrders=${testOrders?.length ?? 0}');
     setState(() {
       currentIndex = 0;
       if (testOrders != null && testOrders.isNotEmpty) {
         _testOrders = List<Map<String, dynamic>>.from(testOrders);
+        _log('goToMapWithRoute: stored ${_testOrders.length} test orders → will use NN (no API)');
+      } else {
+        _log('goToMapWithRoute: no testOrders → will use real API + VRP/NN');
       }
     });
     if (!isOnline) {
@@ -246,7 +253,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       _simRunning = true;
       _simStarted = true;
       if (!resume) {
-        // Only reset on fresh start
         _simIndex          = 0;
         _simPosition       = _fullRoutePoints.first;
         _currentStopTarget = 0;
@@ -292,12 +298,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
         if (dist < 50) {
           _arrivalDialogShowing = true;
-          _simTimer?.cancel();   // pause by cancelling timer directly
+          _simTimer?.cancel();
           await _showDeliveryCompletionDialog(stop);
         }
       }
     });
   }
+
   Future<void> _showDeliveryCompletionDialog(_RouteStop stop) async {
     final priceController = TextEditingController(
       text: stop.quantity > 0 ? stop.quantity.toStringAsFixed(0) : '',
@@ -402,18 +409,18 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         });
 
         if (_currentStopTarget < _optimizedStops.length) {
-          _startSimulation(resume: true);  // ← resume, don't restart
+          _startSimulation(resume: true);
         } else {
           _showSnack('Toutes les livraisons sont terminées ', Colors.green);
         }
       } catch (e) {
         _showSnack('Erreur lors de la confirmation', Colors.red);
         setState(() => _arrivalDialogShowing = false);
-        _startSimulation(resume: true);  // ← resume on error too
+        _startSimulation(resume: true);
       }
     } else {
       setState(() => _arrivalDialogShowing = false);
-      _startSimulation(resume: true);  // ← resume on cancel
+      _startSimulation(resume: true);
     }
 
     priceController.dispose();
@@ -442,31 +449,42 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   // ─────────────────────────────────────────────────────────
   Future<void> _loadOptimizedRoutes() async {
     _stopSimulation();
+
+    _log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    _log('_loadOptimizedRoutes called');
+    _log('  testOrders count : ${_testOrders.length}');
+    _log('  currentPosition  : ${_currentPosition.latitude.toStringAsFixed(5)}, '
+        '${_currentPosition.longitude.toStringAsFixed(5)}');
+
     if (_testOrders.isNotEmpty) {
+      _log('  → MODE: TEST (nearest-neighbour, no API)');
+      _log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       await _buildRouteFromTestOrders();
       return;
     }
+
+    _log('  → MODE: REAL API (VRP/NSGA-II or NN fallback)');
+    _log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     await _loadOptimizedRoutesFromApi();
   }
 
   // ─────────────────────────────────────────────────────────
   // NEAREST-NEIGHBOUR GREEDY SORT
-  //
-  // Works on any list that has 'lat' and 'lon' keys.
-  // For test orders those keys are set directly.
-  // For real orders, pass a flat list built from position.lat/lon
-  // (see _loadOptimizedRoutesFromApi fallback below).
-  //
+  // ─────────────────────────────────────────────────────────
   List<Map<String, dynamic>> _nearestNeighbourSort(
       LatLng startPosition,
       List<Map<String, dynamic>> orders,
       ) {
+    _log('  NN sort: ${orders.length} orders, start=(${startPosition.latitude.toStringAsFixed(4)}, '
+        '${startPosition.longitude.toStringAsFixed(4)})');
+
     if (orders.isEmpty) return [];
 
     final unvisited = List<Map<String, dynamic>>.from(orders);
     final sorted    = <Map<String, dynamic>>[];
     double curLat   = startPosition.latitude;
     double curLon   = startPosition.longitude;
+    int    step     = 0;
 
     while (unvisited.isNotEmpty) {
       int    bestIdx  = 0;
@@ -486,8 +504,20 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
       final chosen = unvisited.removeAt(bestIdx);
       sorted.add(chosen);
-      curLat = (chosen['lat'] as num?)?.toDouble() ?? curLat;
-      curLon = (chosen['lon'] as num?)?.toDouble() ?? curLon;
+
+      // Print each hop so you can verify the order makes geographic sense
+      final chosenLat = (chosen['lat'] as num?)?.toDouble() ?? curLat;
+      final chosenLon = (chosen['lon'] as num?)?.toDouble() ?? curLon;
+      final label     = chosen['clientName']
+          ?? chosen['_mongoId']
+          ?? chosen['id']
+          ?? 'stop${step + 1}';
+      _log('    step ${step + 1}: $label  dist=${bestDist.toStringAsFixed(2)} km'
+          '  pos=(${chosenLat.toStringAsFixed(4)}, ${chosenLon.toStringAsFixed(4)})');
+
+      curLat = chosenLat;
+      curLon = chosenLon;
+      step++;
     }
 
     return sorted;
@@ -527,7 +557,16 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       final rawOrders =
       acceptedOrders.isNotEmpty ? acceptedOrders : _testOrders;
 
-      // Test orders have flat 'lat'/'lon' — sort works directly
+      _log('TEST MODE: ${rawOrders.length} orders to route'
+          ' (${acceptedOrders.length} accepted, ${_testOrders.length} total)');
+      for (int i = 0; i < rawOrders.length; i++) {
+        final o = rawOrders[i];
+        _log('  [${i + 1}] id=${o['id']}  name=${o['clientName']}'
+            '  status=${o['status']}'
+            '  lat=${o['lat']}  lon=${o['lon']}');
+      }
+
+      _log('  Running nearest-neighbour sort...');
       final ordersToRoute = _nearestNeighbourSort(_currentPosition, rawOrders);
 
       final List<LatLng>     waypoints = [_currentPosition];
@@ -537,7 +576,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         final o   = ordersToRoute[i];
         final lat = (o['lat'] as num?)?.toDouble();
         final lon = (o['lon'] as num?)?.toDouble();
-        if (lat == null || lon == null) continue;
+        if (lat == null || lon == null) {
+          _log('  WARNING: stop $i has null lat/lon — skipped');
+          continue;
+        }
 
         waypoints.add(LatLng(lat, lon));
         stops.add(_RouteStop(
@@ -550,6 +592,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ));
       }
 
+      _log('TEST MODE: calling OSRM for ${waypoints.length - 1} road segments...');
+
       final List<LatLng> fullRoutePoints = [];
       double totalDist = 0;
       final List<double> legDist = [];
@@ -561,6 +605,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         final pts = result['points'] as List<LatLng>;
         final d   = result['distanceKm']  as double? ?? 0;
         final dur = result['durationMin'] as double? ?? 0;
+
+        _log('  OSRM leg $i→${i + 1}: ${d.toStringAsFixed(2)} km  ${dur.toStringAsFixed(1)} min  (${pts.length} pts)');
 
         if (fullRoutePoints.isNotEmpty && pts.isNotEmpty) {
           fullRoutePoints.addAll(pts.skip(1));
@@ -579,6 +625,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           durationMin: legDur[i],
         );
       }
+
+      _log('TEST MODE: route built — total ${totalDist.toStringAsFixed(2)} km'
+          '  ${fullRoutePoints.length} polyline points');
 
       final List<Polyline> newPolylines = [];
       if (fullRoutePoints.length > 1) {
@@ -613,22 +662,23 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingRoutes = false);
-      debugPrint('buildRouteFromTestOrders error: $e');
+      _log('TEST MODE ERROR: $e');
     }
   }
 
   // ─────────────────────────────────────────────────────────
-  // REAL MODE: VRP solution from API
-  // Falls back to nearest-neighbour when Python is unavailable.
+  // REAL MODE: VRP solution from API, NN fallback
   // ─────────────────────────────────────────────────────────
   Future<void> _loadOptimizedRoutesFromApi() async {
     setState(() => _loadingRoutes = true);
 
     try {
-      // 1. Fetch all accepted commandes from MongoDB
+      _log('REAL MODE: fetching commandes (status=en livraison)...');
       final commandes = await ApiService.getCommandes(status: 'en livraison');
+      _log('REAL MODE: ${commandes.length} commandes found');
 
       if (commandes.isEmpty) {
+        _log('REAL MODE: no commandes → clearing map');
         setState(() {
           _polylines       = [];
           _markers         = [];
@@ -641,14 +691,42 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         return;
       }
 
-      // Build mongoId → full commande lookup
+      // Log each commande so we can verify vrpId mapping
+      for (final c in commandes) {
+        final mongoId = (c['_id'] ?? c['id']).toString();
+        final vrpId   = c['vrpId']?.toString() ?? 'NULL';
+        final lat     = c['position']?['lat'];
+        final lon     = c['position']?['lon'];
+        _log('  commande mongoId=$mongoId  vrpId=$vrpId  lat=$lat  lon=$lon');
+      }
+
       final Map<String, Map<String, dynamic>> commandeById = {
         for (final c in commandes)
           (c['_id'] ?? c['id']).toString(): c,
       };
 
-      // 2. Try to get NSGA-II solution from Python via Node.js
+      _log('REAL MODE: calling getVrpSolution()...');
       final vrpResult = await ApiService.getVrpSolution();
+
+      // Log the raw VRP response so you can see what Python returned
+      _log('REAL MODE: VRP response keys = ${vrpResult.keys.toList()}');
+      if (vrpResult['error'] != null) {
+        _log('  VRP error field: ${vrpResult['error']}');
+      }
+      if (vrpResult['routes'] != null) {
+        final routes = vrpResult['routes'] as List;
+        _log('  VRP routes count: ${routes.length}');
+        for (int ri = 0; ri < routes.length; ri++) {
+          final r = routes[ri];
+          _log('    route[$ri] conducteur_id=${r['conducteur_id']}  '
+              'route=${r['route']}  distance_km=${r['distance_km']}');
+        }
+        _log('  VRP distance_totale_km=${vrpResult['distance_totale_km']}');
+        _log('  VRP valide=${vrpResult['valide']}');
+        _log('  VRP nb_commandes=${vrpResult['nb_commandes']}');
+      } else {
+        _log('  VRP routes = null');
+      }
 
       List<String> orderedMongoIds = [];
       bool usedVrp = false;
@@ -659,81 +737,98 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             (vrpResult['distance_totale_km'] as num?)?.toDouble();
         _routeIsValid = vrpResult['valide'] as bool? ?? false;
 
-        // Map vrpId (Python int) → mongoId (MongoDB ObjectId string)
         final Map<String, String> vrpToMongo = {};
         for (final c in commandes) {
           final mongoId = (c['_id'] ?? c['id']).toString();
           final vrpId   = c['vrpId']?.toString();
           if (vrpId != null) vrpToMongo[vrpId] = mongoId;
         }
+        _log('  vrpId→mongoId map: $vrpToMongo');
 
         for (final routeObj in routes) {
           final vrpIds = (routeObj['route'] as List?) ?? [];
           for (final vid in vrpIds) {
             final mongoId = vrpToMongo[vid.toString()];
-            if (mongoId != null) orderedMongoIds.add(mongoId);
+            if (mongoId != null) {
+              orderedMongoIds.add(mongoId);
+            } else {
+              _log('  WARNING: vrpId $vid has no matching mongoId — skipped');
+            }
           }
         }
 
-        if (orderedMongoIds.isNotEmpty) usedVrp = true;
+        if (orderedMongoIds.isNotEmpty) {
+          usedVrp = true;
+          _log('REAL MODE: ✅ NSGA-II solution used — '
+              '${orderedMongoIds.length} stops ordered by Python VRP');
+          _log('  NSGA-II stop order: $orderedMongoIds');
+        } else {
+          _log('REAL MODE: ⚠️ VRP routes were non-empty but vrpId mapping '
+              'produced 0 mongoIds → falling back to NN');
+        }
+      } else {
+        _log('REAL MODE: ⚠️ VRP unavailable or error → will use NN fallback');
       }
 
-      // 3. FALLBACK: Python unavailable or returned empty routes.
-      //    Use nearest-neighbour sort on real commandes.
-      //    Real MongoDB docs store coords in position: { lat, lon }
-      //    so we extract them into a flat list that the sort helper
-      //    can read via o['lat'] / o['lon'].
+      // ── FALLBACK: nearest-neighbour ──────────────────────────
       if (!usedVrp) {
         _totalDistanceKm = null;
         _routeIsValid    = false;
 
+        _log('REAL MODE: 🔄 nearest-neighbour fallback on ${commandeById.length} commandes');
+
         final flatList = commandeById.entries
             .map((e) {
-          final lat =
-          (e.value['position']?['lat'] as num?)?.toDouble();
-          final lon =
-          (e.value['position']?['lon'] as num?)?.toDouble();
-          if (lat == null || lon == null) return null;
+          final lat = (e.value['position']?['lat'] as num?)?.toDouble();
+          final lon = (e.value['position']?['lon'] as num?)?.toDouble();
+          if (lat == null || lon == null) {
+            _log('  WARNING: commande ${e.key} has null position — excluded from NN');
+            return null;
+          }
           return <String, dynamic>{
-            '_mongoId': e.key,
-            'lat':      lat,
-            'lon':      lon,
+            '_mongoId':    e.key,
+            'lat':         lat,
+            'lon':         lon,
+            'clientName':  (e.value['client'] is Map)
+                ? '${e.value['client']['prenom'] ?? ''} ${e.value['client']['nom'] ?? ''}'.trim()
+                : e.key,
           };
         })
             .whereType<Map<String, dynamic>>()
             .toList();
 
+        _log('  NN input: ${flatList.length} valid positions');
         final sorted = _nearestNeighbourSort(_currentPosition, flatList);
-        orderedMongoIds =
-            sorted.map((o) => o['_mongoId'].toString()).toList();
-
-        debugPrint(
-          '[Map] VRP indisponible — nearest-neighbour fallback: '
-              '${orderedMongoIds.length} arrêts',
-        );
-      } else {
-        debugPrint('[Map] NSGA-II utilisé: ${orderedMongoIds.length} arrêts');
+        orderedMongoIds = sorted.map((o) => o['_mongoId'].toString()).toList();
+        _log('  NN result order: $orderedMongoIds');
       }
 
-      // 4. Build waypoints from ordered mongo IDs
-      //    Always read position.lat/lon — the real MongoDB structure.
+      // ── Build waypoints ──────────────────────────────────────
+      _log('REAL MODE: building waypoints from ${orderedMongoIds.length} ordered IDs...');
       final List<LatLng>     waypoints = [_currentPosition];
       final List<_RouteStop> stops     = [];
 
       for (int i = 0; i < orderedMongoIds.length; i++) {
         final id  = orderedMongoIds[i];
         final cmd = commandeById[id];
-        if (cmd == null) continue;
+        if (cmd == null) {
+          _log('  WARNING: mongoId $id not in commandeById — skipped');
+          continue;
+        }
 
         final lat = (cmd['position']?['lat'] as num?)?.toDouble();
         final lon = (cmd['position']?['lon'] as num?)?.toDouble();
-        if (lat == null || lon == null) continue;
+        if (lat == null || lon == null) {
+          _log('  WARNING: commande $id has null position — skipped');
+          continue;
+        }
 
         final raw = cmd['client'];
         final clientName = (raw is Map)
             ? '${raw['prenom'] ?? ''} ${raw['nom'] ?? ''}'.trim()
             : 'Client ${i + 1}';
 
+        _log('  stop ${i + 1}: $clientName  ($lat, $lon)');
         waypoints.add(LatLng(lat, lon));
         stops.add(_RouteStop(
           index:      i + 1,
@@ -745,7 +840,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ));
       }
 
-      // 5. OSRM road segments for polyline + real distances
+      // ── OSRM road segments ───────────────────────────────────
+      _log('REAL MODE: calling OSRM for ${waypoints.length - 1} road segments...');
       final List<LatLng> fullRoutePoints = [];
       double segmentDistKm = 0;
       final List<double> legDistances = [];
@@ -757,6 +853,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         final pts = result['points'] as List<LatLng>;
         final d   = result['distanceKm']  as double? ?? 0;
         final dur = result['durationMin'] as double? ?? 0;
+
+        _log('  OSRM leg $i→${i + 1}: ${d.toStringAsFixed(2)} km  ${dur.toStringAsFixed(1)} min');
 
         if (fullRoutePoints.isNotEmpty && pts.isNotEmpty) {
           fullRoutePoints.addAll(pts.skip(1));
@@ -774,6 +872,12 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           durationMin: legDurations[i],
         );
       }
+
+      final usedAlgo = usedVrp ? 'NSGA-II (Python VRP)' : 'Nearest-Neighbour (fallback)';
+      _log('REAL MODE: ✅ route complete — algorithm=$usedAlgo'
+          '  total=${segmentDistKm.toStringAsFixed(2)} km'
+          '  stops=${stops.length}'
+          '  polyline_pts=${fullRoutePoints.length}');
 
       final List<Polyline> newPolylines = [];
       if (fullRoutePoints.length > 1) {
@@ -807,7 +911,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingRoutes = false);
-      debugPrint('loadOptimizedRoutesFromApi error: $e');
+      _log('REAL MODE ERROR: $e');
     }
   }
 
@@ -1236,8 +1340,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     ),
                     child: const Text('Annuler tout',
                         style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
+                            color:      Colors.white,
+                            fontSize:   11,
                             fontWeight: FontWeight.bold)),
                   ),
                 ),
@@ -1290,8 +1394,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 _SimButton(
                   icon:    Icons.play_arrow,
                   color:   Colors.green,
-                  enabled: !_simRunning &&
-                      _fullRoutePoints.isNotEmpty,
+                  enabled: !_simRunning && _fullRoutePoints.isNotEmpty,
                   onTap:   _startSimulation,
                   tooltip: _simStarted ? 'Reprendre' : 'Démarrer',
                 ),
@@ -1353,10 +1456,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       : null,
                   trailing: stop.distanceKm != null
                       ? Column(
-                    mainAxisAlignment:
-                    MainAxisAlignment.center,
-                    crossAxisAlignment:
-                    CrossAxisAlignment.end,
+                    mainAxisAlignment:  MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
                         '${stop.distanceKm!.toStringAsFixed(1)} km',
@@ -1413,9 +1514,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     style: TextStyle(
                       fontSize:   20,
                       fontWeight: FontWeight.bold,
-                      color: isOnline
-                          ? Colors.green
-                          : Colors.black87,
+                      color: isOnline ? Colors.green : Colors.black87,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -1435,13 +1534,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 width: 80, height: 80,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: isOnline
-                      ? Colors.red
-                      : const Color(0xFF1E3A8A),
+                  color: isOnline ? Colors.red : const Color(0xFF1E3A8A),
                   boxShadow: [BoxShadow(
-                    color: (isOnline
-                        ? Colors.red
-                        : const Color(0xFF1E3A8A))
+                    color: (isOnline ? Colors.red : const Color(0xFF1E3A8A))
                         .withOpacity(0.4),
                     blurRadius:   15,
                     spreadRadius: 2,
@@ -1459,7 +1554,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 ),
               ),
             ),
-
           ],
         ),
       ),
@@ -1482,8 +1576,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 onTap: () => Navigator.pop(context),
                 child: Container(
                   width: double.infinity,
-                  padding:
-                  const EdgeInsets.symmetric(vertical: 10),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
                   color: const Color(0xFF0B3C49),
                   child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1578,9 +1671,7 @@ class _SimButton extends StatelessWidget {
                 : null,
           ),
           child: Icon(icon,
-              color: enabled
-                  ? Colors.white
-                  : Colors.grey.shade500,
+              color: enabled ? Colors.white : Colors.grey.shade500,
               size: 18),
         ),
       ),

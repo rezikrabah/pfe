@@ -12,7 +12,7 @@ class ApiService {
   static const String baseUrl = 'https://pfe-backend-nwmy.onrender.com';
 
   /// Python FastAPI — VRP NSGA-II optimization (local PC)
-  static const String pythonUrl = 'https://pfebackendpython.onrender.com/';
+  static const String pythonUrl = 'https://pfebackendpython.onrender.com';
 
   // Stored after login
   static String? token;
@@ -63,14 +63,9 @@ class ApiService {
     }
   }
 
-  // ─────────────────────────────────────────
-  // AUTH  →  /api/auth
-  // ─────────────────────────────────────────
+
 
 // ─────────────────────────────────────────────────────────
-  // ADD THIS METHOD to your existing ApiService class
-  // Gets the current VRP optimised solution from Python
-  // Returns the ordered route list per conducteur
   // ─────────────────────────────────────────────────────────
   static Future<Map<String, dynamic>> getVrpSolution() async {
     try {
@@ -87,7 +82,9 @@ class ApiService {
       return {'error': e.toString()};
     }
   }
-
+  // ─────────────────────────────────────────
+  // AUTH  →  /api/auth
+  // ─────────────────────────────────────────
   static Future<Map<String, dynamic>> register({
     required String nom,
     required String prenom,
@@ -537,10 +534,11 @@ class ApiService {
     try {
       final conducteurs = chauffeurs.map((c) => {
         'id': (c['_id'] ?? c['id']).toString(),
-        'nom': c['nom'] ?? '',
         'capacity': (c['capaciteCamion'] as num?)?.toDouble() ?? 0.0,
         'lat': fournisseurLat,
         'lon': fournisseurLon,
+        'nom': c['nom'] ?? '',
+
       }).toList();
 
       final res = await http.post(
@@ -561,6 +559,8 @@ class ApiService {
     required double lat,
     required double lon,
     required double demand,
+
+
     String description = '',
   }) async {
     try {
@@ -621,7 +621,7 @@ class ApiService {
   static Future<Map<String, dynamic>> optimize() async {
     try {
       final res = await http.post(
-        Uri.parse('$pythonUrl/optimize'),
+        Uri.parse('$pythonUrl/optimisation/lancer'),
         headers: _pythonHeaders,
         body: jsonEncode({}),
       ).timeout(const Duration(seconds: 30));
@@ -708,6 +708,22 @@ class ApiService {
       return {'error': 'Connection error.'};
     } on TimeoutException {
       return {'error': 'Request timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+  static Future<Map<String, dynamic>> initGraph() async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/optimisation/init'),
+        headers: _pythonHeaders,
+        body: jsonEncode({}),
+      ).timeout(const Duration(seconds: 30));
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable.'};
+    } on TimeoutException {
+      return {'error': 'Init timed out.'};
     } catch (e) {
       return {'error': e.toString()};
     }

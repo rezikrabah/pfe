@@ -392,27 +392,35 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
-  // ── MANUAL NSGA-II OPTIMIZE (AppBar button) ───────────────────
   Future<void> _runOptimization() async {
     setState(() => _loading = true);
     try {
-      final result = await ApiService.optimize();
 
+      // STEP 1 — init the road graph (mandatory before lancer)
+      final initResult = await ApiService.initGraph();
+      if (initResult['error'] != null) {
+        _showError('Erreur init graphe: ${initResult['error']}');
+        return;
+      }
+
+      // STEP 2 — run NSGA-II
+      final result = await ApiService.optimize();
       if (result['error'] != null) {
         _showError('Erreur: ${result['error']}');
-      } else {
-        final dist  = (result['distance_totale_km'] as num?)
-            ?.toStringAsFixed(1) ?? '?';
-        final valid = result['valide'] as bool? ?? false;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-                '✓ NSGA-II — $dist km${valid ? "" : " (invalide)"}'),
-            backgroundColor: const Color(0xFF1E3A8A),
-            duration: const Duration(seconds: 4),
-          ));
-        }
+        return;
       }
+
+      final dist  = (result['distance_totale_km'] as num?)
+          ?.toStringAsFixed(1) ?? '?';
+      final valid = result['valide'] as bool? ?? false;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('✓ NSGA-II — $dist km${valid ? "" : " (invalide)"}'),
+          backgroundColor: const Color(0xFF1E3A8A),
+          duration: const Duration(seconds: 4),
+        ));
+      }
+
     } catch (e) {
       _showError('Erreur optimisation: $e');
     } finally {
