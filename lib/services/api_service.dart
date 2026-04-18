@@ -67,20 +67,161 @@ class ApiService {
 
 // ─────────────────────────────────────────────────────────
   // ─────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> getVrpSolution() async {
+  static Future<Map<String, dynamic>> getVrpSolutionWithRealOrders({
+    required List<Map<String, dynamic>> commandes, // ← pass real API commandes here
+    required double depotLat,
+    required double depotLon,
+    double capaciteVehicule = 5000,
+  }) async {
+    // Re-map real commande fields to the flat format lancer-direct expects
+    final normalizedCommandes = commandes.map((c) => {
+      'id'        : (c['_id'] ?? c['id'] ?? '').toString(),
+      'lat'       : (c['position']?['lat'] as num?)?.toDouble() ?? 0.0,
+      'lon'       : (c['position']?['lon'] as num?)?.toDouble() ?? 0.0,
+      'quantity'  : (c['capacite'] as num?)?.toInt() ?? 0,
+      'price'     : (c['prix'] as num?)?.toDouble() ?? 0.0,
+      'address'   : c['adresse']?.toString() ?? '',
+    }).toList();
+
+    return getVrpSolutionWithOrders(
+      commandes        : normalizedCommandes,
+      depotLat         : depotLat,
+      depotLon         : depotLon,
+      capaciteVehicule : capaciteVehicule,
+    );
+  }
+  static Future<Map<String, dynamic>> getVrpSolutionWithOrders({
+    required List<Map<String, dynamic>> commandes,
+    required double depotLat,
+    required double depotLon,
+    double capaciteVehicule = 5000,
+    int nbVehicules = 1,
+    List<Map<String, dynamic>> chauffeurs = const [],
+  }) async {
+
     try {
-      final res = await http.get(
-        Uri.parse('$pythonUrl/optimisation/solution'),
-      ).timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) return {'error': 'VRP not ready (${res.statusCode})'};
-      return jsonDecode(res.body);
-    } on SocketException {
-      return {'error': 'Python API unreachable.'};
-    } on TimeoutException {
-      return {'error': 'VRP timeout.'};
-    } catch (e) {
-      return {'error': e.toString()};
-    }
+      // ── Build index→originalId map BEFORE sending ──
+      final Map<int, String> vrpIdToOriginalId = {};
+      final vrpCommandes = commandes.asMap().entries.map((e) {
+        final i   = e.key;
+        final c   = e.value;
+        final vid = i + 1;
+        vrpIdToOriginalId[vid] = (c['id'] ?? c['_id'] ?? '').toString();
+        return {
+          'id'         : vid,
+          'lat'        : (c['lat'] as num?)?.toDouble()   ?? 0.0,
+          'lon'        : (c['lon'] as num?)?.toDouble()   ?? 0.0,
+          'demand'     : (c['quantity'] as num?)?.toInt() ?? 0,
+          'gain'       : (c['price'] as num?)?.toDouble() ?? 0.0,
+          'description': c['address']?.toString()         ?? 'Client ${i + 1}',
+        };
+      }).toList();
+
+
+
+      // Build ordered point list: depot first, then orders
+      final allPoints = <Map<String, dynamic>>[
+        {'id': 'depot', 'lat': depotLat, 'lon': depotLon},
+        // ← add chauffeur positions
+        ...chauffeurs.asMap().entries.map((e) => {
+          'id'  : 'chauffeur_${e.key}',
+          'lat' : (e.value['lat'] as num).toDouble(),
+          'lon' : (e.value['lon'] as num).toDouble(),
+        }),
+        ...commandes.asMap().entries.map((e) => {
+          'id'  : '${e.key + 1}',
+          'lat' : (e.value['lat'] as num?)?.toDouble() ?? 0.0,
+          'lon' : (e.value['lon'] as num?)?.toDouble() ?? 0.0,
+        }),
+      ];
+
+      Map<String, dynamic>? distanceMatrix;
+      try {
+        final coordsStr = allPoints
+            .map((p) => '${p['lon']},${p['lat']}')
+            .join(';');
+
+        final osrmRes = await http
+            .get(Uri.parse(
+          'http://router.project-osrm.org/table/v1/driving/$coordsStr'
+              '?annotations=distance,duration',
+        ))
+            .timeout(const Duration(seconds: 40));
+
+        if (osrmRes.statusCode == 200) {
+          final osrmData = jsonDecode(osrmRes.body) as Map<String, dynamic>;
+          if (osrmData['code'] == 'Ok') {
+            // Convert distances from meters → km
+            final rawDist = osrmData['distances'] as List;
+            final kmDist  = rawDist.map((row) =>
+                (row as List).map((v) =>
+                v != null ? (v as num).toDouble() / 1000.0 : null
+                ).toList()
+            ).toList();
+
+            distanceMatrix = {
+              'ids'      : allPoints.map((p) => p['id']).toList(),
+              'distances': kmDist,
+              'durations': osrmData['durations'],  // already in seconds
+            };
+            print('[OSRM table] ✅ matrix built — ${allPoints.length} points');
+          }
+        }
+      } catch (e) {
+        print('[OSRM table] ❌ failed: $e — Python will use Haversine');
+      }
+
+      final conducteurs = chauffeurs.isNotEmpty
+          ? chauffeurs.asMap().entries.map((e) => {
+        'id'      : e.key + 1,
+        'lat'     : (e.value['lat'] as num).toDouble(),
+        'lon'     : (e.value['lon'] as num).toDouble(),
+        'capacity': capaciteVehicule.toInt(),
+        'nom'     : e.value['nom'],
+      }).toList()
+          : List.generate(nbVehicules, (i) => {
+        'id'      : i + 1,
+        'lat'     : depotLat,
+        'lon'     : depotLon,
+        'capacity': capaciteVehicule.toInt(),
+        'nom'     : 'Conducteur ${i + 1}',
+      });
+
+      final body = jsonEncode({
+        'conducteurs'    : conducteurs, // ← single entry, no duplicate
+        'pop_size'       : 30,
+        'generations'    : 80,
+        'distance_matrix': distanceMatrix,
+        'commandes'      : vrpCommandes,
+      });
+
+      final res = await http.post(
+        Uri.parse('$pythonUrl/optimisation/lancer-direct'),
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      ).timeout(const Duration(seconds: 60));
+
+      if (res.statusCode != 200) {
+        return {'error': 'VRP not ready (${res.statusCode})'};
+      }
+
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+
+      // ── Remap VRP integer IDs → original string IDs ──
+      final routes = decoded['routes'] as List<dynamic>? ?? [];
+      for (final route in routes) {
+        final rawRoute = route['route'] as List<dynamic>? ?? [];
+        route['route'] = rawRoute.map((id) {
+          final vid = int.tryParse(id.toString());
+          return vid != null ? (vrpIdToOriginalId[vid] ?? id.toString()) : id.toString();
+        }).toList();
+      }
+
+      return decoded;
+
+    } on SocketException  { return {'error': 'Python API unreachable.'}; }
+    on TimeoutException   { return {'error': 'VRP timeout.'}; }
+    catch (e)             { return {'error': e.toString()}; }
   }
   // ─────────────────────────────────────────
   // AUTH  →  /api/auth
@@ -367,7 +508,7 @@ class ApiService {
     required double prix,
     double? lat,
     double? lon,
-    String? fournisseurId,
+    required String wilaya,
   }) async {
     try {
       final response = await http.post(
@@ -376,9 +517,10 @@ class ApiService {
         body: jsonEncode({
           'capacite': capacite,
           'prix': prix,
+          'wilaya': wilaya,          // ← add this
           if (lat != null) 'lat': lat,
           if (lon != null) 'lon': lon,
-          if (fournisseurId != null) 'fournisseurId': fournisseurId,
+          // ← remove the fournisseurId line entirely
         }),
       );
       return _decode(response);
@@ -404,6 +546,100 @@ class ApiService {
       return [];
     } catch (e) {
       return [];
+    }
+  }
+  /// Registers a single commande with the Python solver.
+  /// Mirrors [sendCommandeToPython] but uses the field names
+  /// the solver expects: id / lat / lon / demand.
+  static Future<Map<String, dynamic>> addCommandeToSolver({
+    required String commandeId,
+    required double lat,
+    required double lon,
+    required double capacite,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/commandes/add'),
+        headers: _pythonHeaders,
+        body: jsonEncode({
+          'id':     commandeId,
+          'lat':    lat,
+          'lon':    lon,
+          'demand': capacite,   // Python solver uses "demand"
+        }),
+      ).timeout(const Duration(seconds: 10));
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable.'};
+    } on TimeoutException {
+      return {'error': 'addCommandeToSolver timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Triggers cheapest-insert on the Python solver so every
+  /// registered commande is woven into an initial feasible route
+  /// before NSGA-II runs.
+  static Future<Map<String, dynamic>> ajouterDynamique() async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/commandes/ajouter-dynamique'),
+        headers: _pythonHeaders,
+        body: jsonEncode({}),
+      ).timeout(const Duration(seconds: 15));
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable.'};
+    } on TimeoutException {
+      return {'error': 'ajouterDynamique timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+  static Future<Map<String, dynamic>> resetSolver() async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/reset'),
+        headers: _pythonHeaders,
+        body: jsonEncode({}),
+      ).timeout(const Duration(seconds: 10));
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable.'};
+    } on TimeoutException {
+      return {'error': 'reset timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+
+
+
+  static Future<void> seedTestOrders(List<Map<String, dynamic>> testOrders) async {
+    // POST each test order to your backend as a real commande
+    for (final order in testOrders) {
+      await http.post(
+        Uri.parse('$baseUrl/commandes'),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'position': {'lat': order['lat'], 'lon': order['lon']},
+          'adresse':  order['address']  ?? '',
+          'capacite': order['quantity'] ?? 0,
+          'client':   order['clientName'] ?? 'Test Client',
+          'status':   'en livraison',
+        }),
+      );
+    }
+  }
+  // method to delete test orders after use
+  static Future<void> deleteTestOrders(List<String> ids) async {
+    for (final id in ids) {
+      await http.delete(
+        Uri.parse('$baseUrl/commandes/$id'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
     }
   }
 
@@ -452,6 +688,7 @@ class ApiService {
       );
       print('>>> assign status: ${response.statusCode}');
       print('>>> assign body: ${response.body}');
+
       return _decode(response);
     } on SocketException {
       return {'error': 'Connection error.'};
@@ -553,6 +790,37 @@ class ApiService {
       return {'error': e.toString()};
     }
   }
+  static Future<Map<String, dynamic>> setupConducteursTestMode({
+    required double fournisseurLat,
+    required double fournisseurLon,
+    required double totalCapacity, // sum of all order quantities
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$pythonUrl/setup/conducteurs'),
+        headers: _pythonHeaders,
+        body: jsonEncode({
+          'conducteurs': [
+            {
+              'id':       'test_driver_001',
+              'capacity': totalCapacity * 1.5, // extra buffer so route is feasible
+              'lat':      fournisseurLat,
+              'lon':      fournisseurLon,
+              'nom':      'Test Driver',
+            }
+          ],
+        }),
+      ).timeout(const Duration(seconds: 10));
+      return jsonDecode(res.body);
+    } on SocketException {
+      return {'error': 'Python API unreachable.'};
+    } on TimeoutException {
+      return {'error': 'setupConducteurs timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
 
   static Future<Map<String, dynamic>> sendCommandeToPython({
     required String id,
