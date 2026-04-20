@@ -34,7 +34,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   final MapController _mapController = MapController();
   Timer? _timer;
 
-  // ── State ──────────────────────────────────────────────────────────
+  // ── State ──────────────────────────────────────────────────────
   String       _statut      = 'en_attente';
   LatLng?      _driverPos;
   LatLng?      _destination;
@@ -50,28 +50,30 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   String?   _error;
   bool      _ratingNavigated = false;
 
-  // ── FIX 1: Track last known position to avoid redundant OSRM calls ─
-  LatLng? _lastFetchedDriverPos;
+  // Last position used for OSRM re-route (threshold gate)
+  LatLng? _lastReroutedPos;
 
-  // ── FIX 2: Prevent overlapping HTTP requests ───────────────────────
+  // Prevents overlapping HTTP requests
   bool _isFetching = false;
 
-  // ── FIX 3: Only auto-fit map on first driver position ──────────────
+  // Only auto-fit map bounds on first driver position
   bool _hasAutoFitted = false;
 
-  // ── FIX 4: Minimum distance (meters) before re-routing ─────────────
-  static const double _minMoveThresholdMeters = 30.0;
+  // ── FIX 2 & 3: Threshold only gates OSRM re-route, NOT marker update.
+  // Raised to 50 m so OSRM is called less often, but the marker itself
+  // always moves on every poll (see _applyTrackingData).
+  static const double _rerouteThresholdMeters = 50.0;
+
+  // ── FIX: Poll every 3 s so simulation movement (uploaded every ~1 s)
+  // is visible to the client without noticeable lag.
+  static const Duration _pollInterval = Duration(seconds: 3);
 
   @override
   void initState() {
     super.initState();
     _chauffeurId = widget.chauffeurId;
     _fetchTracking();
-    // FIX 5: Increase poll interval to 10s to reduce server load
-    _timer = Timer.periodic(
-      const Duration(seconds: 10),
-          (_) => _fetchTracking(),
-    );
+    _timer = Timer.periodic(_pollInterval, (_) => _fetchTracking());
   }
 
   @override
@@ -82,7 +84,6 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   }
 
   Future<void> _fetchTracking() async {
-    // FIX 2: Skip if a request is already in flight
     if (_isFetching) return;
     _isFetching = true;
 
@@ -92,11 +93,10 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
         Uri.parse(
             '${ApiService.baseUrl}/api/commandes/${widget.commandeId}/track'),
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type':  'application/json',
           'Authorization': 'Bearer ${ApiService.token}',
         },
       )
-      // FIX 6: Timeout so slow server doesn't pile up requests
           .timeout(const Duration(seconds: 8));
 
       if (res.statusCode == 404) {
@@ -117,7 +117,9 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       final data = jsonDecode(res.body);
       await _applyTrackingData(data);
     } on TimeoutException {
-      if (mounted) setState(() => _error = 'Délai dépassé, nouvelle tentative...');
+      if (mounted) {
+        setState(() => _error = 'Délai dépassé, nouvelle tentative...');
+      }
     } catch (e) {
       await _fetchCommandeStatus();
     } finally {
@@ -136,8 +138,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       if (!mounted) return;
 
       if (commande.isNotEmpty) {
-        final normalized =
-        _normalizeStatus(commande['status'] ?? commande['statut'] ?? 'en attente');
+        final normalized = _normalizeStatus(
+            commande['status'] ?? commande['statut'] ?? 'en attente');
         setState(() {
           _statut  = normalized;
           _loading = false;
@@ -162,23 +164,20 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     }
   }
 
-  // ── FIX 1 & 3: Only call OSRM when driver actually moved ───────────
-  bool _driverMovedSignificantly(LatLng newPos) {
-    if (_lastFetchedDriverPos == null) return true;
-    const Distance distance = Distance();
-    final meters = distance.as(
-      LengthUnit.Meter,
-      _lastFetchedDriverPos!,
-      newPos,
-    );
-    return meters >= _minMoveThresholdMeters;
+  // Returns true if the new position is far enough to justify an
+  // OSRM API call. The marker itself always updates regardless.
+  bool _shouldReroute(LatLng newPos) {
+    if (_lastReroutedPos == null) return true;
+    const Distance d = Distance();
+    return d.as(LengthUnit.Meter, _lastReroutedPos!, newPos) >=
+        _rerouteThresholdMeters;
   }
 
   Future<void> _applyTrackingData(Map<String, dynamic> data) async {
     final rawStatus = (data['statut'] ?? data['status'] ?? 'en attente').toString();
     final statut    = _normalizeStatus(rawStatus);
 
-    // Parse driver position
+    // ── Parse driver position ─────────────────────────────────
     LatLng? driverPos;
     if (data['driver_lat'] != null && data['driver_lon'] != null) {
       driverPos = LatLng(
@@ -190,7 +189,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
           : null;
     }
 
-    // Parse destination
+    // ── Parse destination ─────────────────────────────────────
     LatLng? destination;
     final dest = data['destination'];
     if (dest != null && dest['lat'] != null && dest['lon'] != null) {
@@ -200,29 +199,38 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       );
     }
 
-    // ── FIX 1: Only re-route if driver moved significantly ─────────────
-    List<LatLng> routePoints = _routePoints; // keep existing route by default
+    // ── FIX 2 & 3: Always update _driverPos (marker moves every poll).
+    // Only call OSRM when the driver has moved more than the threshold.
+    List<LatLng> routePoints = _routePoints;
     double?      distanceKm  = _distanceKm;
     double?      durationMin = _durationMin;
 
-    final shouldReroute = driverPos != null &&
-        destination != null &&
-        _driverMovedSignificantly(driverPos);
-
-    if (shouldReroute) {
-      try {
-        final result = await OsrmService.getRouteWithMetrics(driverPos!, destination!);
-        routePoints              = result['points']     as List<LatLng>;
-        distanceKm               = result['distanceKm'] as double?;
-        durationMin              = result['durationMin'] as double?;
-        _lastFetchedDriverPos    = driverPos; // update baseline
-      } catch (e) {
-        routePoints = [driverPos!, destination!];
-        _lastFetchedDriverPos = driverPos;
+    if (driverPos != null) {
+      if (destination != null && _shouldReroute(driverPos)) {
+        // Driver moved enough — fetch fresh road route from OSRM
+        try {
+          final result =
+          await OsrmService.getRouteWithMetrics(driverPos, destination);
+          routePoints          = result['points']      as List<LatLng>;
+          distanceKm           = result['distanceKm']  as double?;
+          durationMin          = result['durationMin'] as double?;
+          _lastReroutedPos     = driverPos;
+        } catch (_) {
+          // OSRM failed — draw a straight line fallback
+          routePoints      = [driverPos, destination];
+          _lastReroutedPos = driverPos;
+        }
+      } else if (destination != null && routePoints.isNotEmpty) {
+        // Driver hasn't moved enough for a full re-route.
+        // Trim the polyline: drop all points behind the driver so the
+        // rendered route shrinks as the truck advances.
+        final trimmed = _trimRouteToDriver(driverPos, routePoints);
+        if (trimmed.length >= 2) routePoints = trimmed;
       }
+      // If destination is null, just show the driver dot with no route.
     }
 
-    // Parse driver/supplier info
+    // ── Parse driver / supplier name ──────────────────────────
     String? driverName;
     String? driverPhone;
     final chauffeur   = data['chauffeur'];
@@ -233,18 +241,21 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       driverPhone  = chauffeur['telephone'];
       _chauffeurId = (chauffeur['_id'] ?? chauffeur['id'])?.toString();
     } else if (fournisseur != null) {
-      driverName = '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'.trim();
+      driverName =
+          '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'.trim();
       if (driverName!.isEmpty) driverName = null;
-      _chauffeurId ??= (fournisseur['_id'] ?? fournisseur['id'])?.toString();
+      _chauffeurId ??=
+          (fournisseur['_id'] ?? fournisseur['id'])?.toString();
     }
 
     if (!mounted) return;
 
+    // ── FIX 3: Always update _driverPos so marker redraws every poll ──
     setState(() {
       _error       = null;
       _loading     = false;
       _statut      = statut;
-      _driverPos   = driverPos;
+      _driverPos   = driverPos;   // ← always set, not gated by threshold
       _destination = destination;
       _routePoints = routePoints;
       _distanceKm  = distanceKm;
@@ -259,22 +270,41 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       return;
     }
 
-    // ── FIX 3: Only auto-fit map once, then let the user control it ────
-    if (!_hasAutoFitted && driverPos != null && destination != null) {
+    // Auto-fit bounds only on the very first update
+    if (!_hasAutoFitted) {
       _hasAutoFitted = true;
-      final bounds = LatLngBounds.fromPoints([driverPos, destination]);
-      _mapController.fitBounds(
-        bounds,
-        options: const FitBoundsOptions(padding: EdgeInsets.all(80)),
-      );
-    } else if (!_hasAutoFitted && driverPos != null) {
-      _hasAutoFitted = true;
-      _mapController.move(driverPos, 15);
-    } else if (!_hasAutoFitted && destination != null) {
-      _hasAutoFitted = true;
-      _mapController.move(destination, 14);
+      if (driverPos != null && destination != null) {
+        _mapController.fitBounds(
+          LatLngBounds.fromPoints([driverPos, destination]),
+          options: const FitBoundsOptions(padding: EdgeInsets.all(80)),
+        );
+      } else if (driverPos != null) {
+        _mapController.move(driverPos, 15);
+      } else if (destination != null) {
+        _mapController.move(destination, 14);
+      }
     }
-    // After first fit, map position is NOT touched — user can pan freely.
+  }
+
+  // Trim all polyline points that are "behind" the driver's current
+  // position so the drawn route shrinks as the truck moves forward.
+  List<LatLng> _trimRouteToDriver(
+      LatLng driverPos, List<LatLng> points) {
+    if (points.isEmpty) return points;
+
+    const Distance d = Distance();
+    int closestIdx = 0;
+    double closestDist = double.infinity;
+
+    for (int i = 0; i < points.length; i++) {
+      final dist = d.as(LengthUnit.Meter, driverPos, points[i]);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestIdx  = i;
+      }
+    }
+    // Return from the closest point onwards, prepending actual driver pos
+    return [driverPos, ...points.sublist(closestIdx)];
   }
 
   void _navigateToRating() {
@@ -283,20 +313,22 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
 
     Future.delayed(const Duration(milliseconds: 800), () {
       if (!mounted) return;
-
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
           title: const Row(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 32),
             SizedBox(width: 12),
             Text('Livraison effectuée !',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold)),
           ]),
           content: const Text(
-            'Votre commande a été livrée avec succès.\nVoulez-vous évaluer le livreur ?',
+            'Votre commande a été livrée avec succès.\n'
+                'Voulez-vous évaluer le livreur ?',
             style: TextStyle(fontSize: 14),
           ),
           actions: [
@@ -305,7 +337,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                 Navigator.pop(ctx);
                 Navigator.pop(context);
               },
-              child: const Text('Plus tard', style: TextStyle(color: Colors.grey)),
+              child: const Text('Plus tard',
+                  style: TextStyle(color: Colors.grey)),
             ),
             ElevatedButton.icon(
               onPressed: () {
@@ -327,7 +360,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0B3C49),
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],
@@ -402,7 +436,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
             Container(
               width: 120, height: 120,
               decoration: BoxDecoration(
-                color: (isDelivered ? Colors.green : Colors.red).withOpacity(0.1),
+                color: (isDelivered ? Colors.green : Colors.red)
+                    .withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -427,7 +462,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   ? 'Votre commande a été livrée avec succès.'
                   : 'Votre commande a été refusée par le fournisseur.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 15, color: Colors.grey.shade600),
+              style: TextStyle(
+                  fontSize: 15, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 32),
             if (isDelivered)
@@ -450,8 +486,10 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.amber,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 32, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             const SizedBox(height: 12),
@@ -462,8 +500,10 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0B3C49),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 32, vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],
@@ -480,7 +520,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Commande #${widget.commandeId.substring(0, 8)}...',
+          'Commande #${widget.commandeId.length > 8 ? widget.commandeId.substring(0, 8) : widget.commandeId}...',
           style: TextStyle(fontSize: screenWidth * 0.04),
         ),
         backgroundColor: const Color(0xFF0B3C49),
@@ -499,7 +539,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
           : Stack(
         children: [
 
-          // ── Map ──────────────────────────────────────────────
+          // ── Map ──────────────────────────────────────
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -512,7 +552,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
               TileLayer(
                 urlTemplate:
                 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.yourname.waterdelivery',
+                userAgentPackageName:
+                'com.yourname.waterdelivery',
               ),
               if (_routePoints.length > 1)
                 PolylineLayer(
@@ -528,6 +569,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                 ),
               MarkerLayer(
                 markers: [
+                  // ── Truck marker — updates every 3 s ──
                   if (_driverPos != null)
                     Marker(
                       point:  _driverPos!,
@@ -537,7 +579,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                         decoration: BoxDecoration(
                           color:  Colors.red,
                           shape:  BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
+                          border: Border.all(
+                              color: Colors.white, width: 3),
                           boxShadow: const [
                             BoxShadow(
                               color:      Colors.black26,
@@ -551,6 +594,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                             size:  screenWidth * 0.07),
                       ),
                     ),
+                  // ── Destination pin ──────────────────
                   if (_destination != null)
                     Marker(
                       point:  _destination!,
@@ -565,7 +609,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
             ],
           ),
 
-          // ── Status card ──────────────────────────────────────
+          // ── Status card ───────────────────────────────
           Positioned(
             top:   screenHeight * 0.02,
             left:  screenWidth  * 0.04,
@@ -575,7 +619,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16)),
               child: Padding(
-                padding: EdgeInsets.all(screenWidth * 0.04),
+                padding:
+                EdgeInsets.all(screenWidth * 0.04),
                 child: Column(
                   mainAxisSize:       MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -603,7 +648,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                         SizedBox(
                           width:  screenWidth * 0.04,
                           height: screenWidth * 0.04,
-                          child: const CircularProgressIndicator(
+                          child:
+                          const CircularProgressIndicator(
                             strokeWidth: 2,
                             color: Color(0xFF9C27B0),
                           ),
@@ -611,16 +657,19 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                     ]),
 
                     if (_driverName != null) ...[
-                      SizedBox(height: screenHeight * 0.015),
+                      SizedBox(
+                          height: screenHeight * 0.015),
                       Row(children: [
                         CircleAvatar(
-                          backgroundColor: Colors.grey.shade200,
+                          backgroundColor:
+                          Colors.grey.shade200,
                           radius: screenWidth * 0.045,
                           child: Icon(Icons.person,
                               color: Colors.grey,
                               size:  screenWidth * 0.05),
                         ),
-                        SizedBox(width: screenWidth * 0.03),
+                        SizedBox(
+                            width: screenWidth * 0.03),
                         Expanded(
                           child: Column(
                             crossAxisAlignment:
@@ -629,16 +678,20 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                               Text(
                                 _driverName!,
                                 style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize:   screenWidth * 0.035,
+                                  fontWeight:
+                                  FontWeight.w600,
+                                  fontSize:
+                                  screenWidth * 0.035,
                                 ),
                               ),
                               if (_driverPhone != null)
                                 Text(
                                   _driverPhone!,
                                   style: TextStyle(
-                                    color:    Colors.grey.shade600,
-                                    fontSize: screenWidth * 0.03,
+                                    color: Colors
+                                        .grey.shade600,
+                                    fontSize:
+                                    screenWidth * 0.03,
                                   ),
                                 ),
                             ],
@@ -656,42 +709,49 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
 
                     if (_distanceKm != null &&
                         _durationMin != null) ...[
-                      SizedBox(height: screenHeight * 0.015),
+                      SizedBox(
+                          height: screenHeight * 0.015),
                       const Divider(height: 1),
-                      SizedBox(height: screenHeight * 0.015),
+                      SizedBox(
+                          height: screenHeight * 0.015),
                       Row(children: [
                         Expanded(
                           child: _buildMetricTile(
-                            icon:        Icons.route,
+                            icon:       Icons.route,
                             value:
                             '${_distanceKm!.toStringAsFixed(1)} km',
-                            label:       'Distance',
+                            label:      'Distance',
                             screenWidth: screenWidth,
                           ),
                         ),
                         Container(
                             height: 30,
                             width:  1,
-                            color:  Colors.grey.shade300),
+                            color:
+                            Colors.grey.shade300),
                         Expanded(
                           child: _buildMetricTile(
-                            icon:        Icons.access_time,
-                            value:       '${_durationMin!.round()} min',
-                            label:       'Temps estimé',
+                            icon:       Icons.access_time,
+                            value:
+                            '${_durationMin!.round()} min',
+                            label:      'Temps estimé',
                             screenWidth: screenWidth,
                           ),
                         ),
-                        if (_getLastUpdateText() != null) ...[
+                        if (_getLastUpdateText() !=
+                            null) ...[
                           Container(
                               height: 30,
                               width:  1,
-                              color:  Colors.grey.shade300),
+                              color:
+                              Colors.grey.shade300),
                           Expanded(
                             child: _buildMetricTile(
-                              icon:        Icons.update,
-                              value:       _getLastUpdateText()!,
-                              label:       'Mise à jour',
-                              iconColor:   Colors.orange,
+                              icon:      Icons.update,
+                              value:
+                              _getLastUpdateText()!,
+                              label:     'Mise à jour',
+                              iconColor: Colors.orange,
                               screenWidth: screenWidth,
                             ),
                           ),
@@ -704,18 +764,21 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
             ),
           ),
 
-          // ── Waiting overlay ──────────────────────────────────
+          // ── Waiting overlay ──────────────────────────
           if (_statut == 'en_attente')
             Center(
               child: Container(
                 margin: EdgeInsets.symmetric(
                     horizontal: screenWidth * 0.08),
-                padding: EdgeInsets.all(screenWidth * 0.06),
+                padding:
+                EdgeInsets.all(screenWidth * 0.06),
                 decoration: BoxDecoration(
                   color:        Colors.white,
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
-                    BoxShadow(color: Colors.black12, blurRadius: 12)
+                    BoxShadow(
+                        color:      Colors.black12,
+                        blurRadius: 12)
                   ],
                 ),
                 child: Column(
@@ -724,56 +787,67 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                     Icon(Icons.hourglass_top,
                         size:  screenWidth * 0.13,
                         color: _statusColor),
-                    SizedBox(height: screenHeight * 0.015),
+                    SizedBox(
+                        height: screenHeight * 0.015),
                     Text(
                       'En attente d\'acceptation\npar le fournisseur',
                       textAlign: TextAlign.center,
-                      style:
-                      TextStyle(fontSize: screenWidth * 0.038),
+                      style: TextStyle(
+                          fontSize: screenWidth * 0.038),
                     ),
                   ],
                 ),
               ),
             ),
 
-          // ── En livraison – no GPS yet overlay ───────────────
+          // ── In delivery, no GPS yet ──────────────────
           if (_statut == 'assignee' && _driverPos == null)
             Positioned(
               bottom: screenHeight * 0.22,
               left:   screenWidth  * 0.04,
               right:  screenWidth  * 0.04,
               child: Container(
-                padding: EdgeInsets.all(screenWidth * 0.04),
+                padding:
+                EdgeInsets.all(screenWidth * 0.04),
                 decoration: BoxDecoration(
                   color:        Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: const [
-                    BoxShadow(color: Colors.black12, blurRadius: 8)
+                    BoxShadow(
+                        color:      Colors.black12,
+                        blurRadius: 8)
                   ],
                 ),
                 child: Row(children: [
                   Icon(Icons.local_shipping,
-                      color: const Color(0xFF9C27B0),
-                      size:  screenWidth * 0.06),
-                  SizedBox(width: screenWidth * 0.03),
+                      color:
+                      const Color(0xFF9C27B0),
+                      size: screenWidth * 0.06),
+                  SizedBox(
+                      width: screenWidth * 0.03),
                   Expanded(
                     child: Text(
-                      'Votre commande est en livraison.\nLocalisation du livreur en cours...',
-                      style: TextStyle(fontSize: screenWidth * 0.033),
+                      'Votre commande est en livraison.\n'
+                          'Localisation du livreur en cours...',
+                      style: TextStyle(
+                          fontSize:
+                          screenWidth * 0.033),
                     ),
                   ),
                   SizedBox(
                     width:  screenWidth * 0.05,
                     height: screenWidth * 0.05,
-                    child: const CircularProgressIndicator(
+                    child:
+                    const CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Color(0xFF9C27B0)),
+                        color:
+                        Color(0xFF9C27B0)),
                   ),
                 ]),
               ),
             ),
 
-          // ── Control FABs ─────────────────────────────────────
+          // ── Control FABs ─────────────────────────────
           Positioned(
             bottom: screenHeight * 0.12,
             right:  screenWidth  * 0.04,
@@ -784,55 +858,65 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   FloatingActionButton.small(
                     heroTag:         'center_driver',
                     backgroundColor: Colors.white,
-                    onPressed: () =>
-                        _mapController.move(_driverPos!, 16),
+                    onPressed: () => _mapController
+                        .move(_driverPos!, 16),
                     child: Icon(Icons.local_shipping,
                         color: Colors.red,
                         size:  screenWidth * 0.05),
                   ),
                 if (_driverPos != null)
-                  SizedBox(height: screenHeight * 0.01),
+                  SizedBox(
+                      height: screenHeight * 0.01),
                 if (_destination != null)
                   FloatingActionButton.small(
                     heroTag:         'center_dest',
                     backgroundColor: Colors.white,
-                    onPressed: () =>
-                        _mapController.move(_destination!, 16),
+                    onPressed: () => _mapController
+                        .move(_destination!, 16),
                     child: Icon(Icons.location_on,
                         color: Colors.green,
                         size:  screenWidth * 0.05),
                   ),
                 if (_destination != null)
-                  SizedBox(height: screenHeight * 0.01),
+                  SizedBox(
+                      height: screenHeight * 0.01),
                 FloatingActionButton(
                   heroTag:         'fit_bounds',
-                  backgroundColor: const Color(0xFF0B3C49),
+                  backgroundColor:
+                  const Color(0xFF0B3C49),
                   onPressed: () {
-                    if (_driverPos != null && _destination != null) {
-                      final bounds = LatLngBounds.fromPoints(
-                          [_driverPos!, _destination!]);
-                      _mapController.fitBounds(bounds,
-                          options: const FitBoundsOptions(
-                              padding: EdgeInsets.all(100)));
+                    if (_driverPos != null &&
+                        _destination != null) {
+                      _mapController.fitBounds(
+                        LatLngBounds.fromPoints(
+                            [_driverPos!, _destination!]),
+                        options:
+                        const FitBoundsOptions(
+                            padding:
+                            EdgeInsets.all(100)),
+                      );
                     } else if (_destination != null) {
-                      _mapController.move(_destination!, 14);
+                      _mapController.move(
+                          _destination!, 14);
                     }
                   },
-                  child: Icon(Icons.center_focus_strong,
+                  child: Icon(
+                      Icons.center_focus_strong,
                       size: screenWidth * 0.06),
                 ),
               ],
             ),
           ),
 
-          // ── Error banner ─────────────────────────────────────
+          // ── Error banner ─────────────────────────────
           if (_error != null)
             Positioned(
               bottom: screenHeight * 0.025,
               left:   screenWidth  * 0.04,
               right:  screenWidth  * 0.04,
               child: Container(
-                padding: EdgeInsets.all(screenWidth * 0.03),
+                padding:
+                EdgeInsets.all(screenWidth * 0.03),
                 decoration: BoxDecoration(
                   color:        Colors.orange.shade100,
                   borderRadius: BorderRadius.circular(12),
@@ -854,8 +938,9 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                   TextButton(
                     onPressed: _fetchTracking,
                     child: Text('Réessayer',
-                        style:
-                        TextStyle(fontSize: screenWidth * 0.03)),
+                        style: TextStyle(
+                            fontSize:
+                            screenWidth * 0.03)),
                   ),
                 ]),
               ),

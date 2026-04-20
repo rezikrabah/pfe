@@ -37,13 +37,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int    _totalCapacity = 0;
   String _memberSince = '';
   String _role       = '';
-
+  List<String> selectedWilayas = [];
   @override
   void initState() {
     super.initState();
     _loadProfile();
+    _loadCurrentWilayas();
   }
-
+  Future<void> _loadCurrentWilayas() async {
+    final info = await ApiService. getFournisseurInfo(); // or getFournisseurInfo()
+    setState(() {
+      selectedWilayas = List<String>.from(info['fournisseurInfo']?['wilayas'] ?? []);
+    });
+  }
   // ── Load from DB ───────────────────────────────────────────────
   Future<void> _loadProfile() async {
     setState(() { _isLoading = true; _error = null; });
@@ -109,6 +115,122 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+
+  void _showWilayaPicker() {
+    List<String> tempSelected = List.from(selectedWilayas);
+    final wilayas = ['01 - Adrar', '02 - Chlef', '03 - Laghouat', '04 - Oum El Bouaghi',
+      '05 - Batna', '06 - Béjaïa', '07 - Biskra', '08 - Béchar', '09 - Blida',
+      '10 - Bouira', '11 - Tamanrasset', '12 - Tébessa', '13 - Tlemcen', '14 - Tiaret',
+      '15 - Tizi Ouzou', '16 - Alger', '17 - Djelfa', '18 - Jijel', '19 - Sétif',
+      '20 - Saïda', '21 - Skikda', '22 - Sidi Bel Abbès', '23 - Annaba', '24 - Guelma',
+      '25 - Constantine', '26 - Médéa', '27 - Mostaganem', '28 - M\'Sila', '29 - Mascara',
+      '30 - Ouargla', '31 - Oran', '32 - El Bayadh', '33 - Illizi',
+      '34 - Bordj Bou Arréridj', '35 - Boumerdès', '36 - El Tarf', '37 - Tindouf',
+      '38 - Tissemsilt', '39 - El Oued', '40 - Khenchela', '41 - Souk Ahras',
+      '42 - Tipaza', '43 - Mila', '44 - Aïn Defla', '45 - Naâma',
+      '46 - Aïn Témouchent', '47 - Ghardaïa', '48 - Relizane', '49 - Timimoun',
+      '50 - Bordj Badji Mokhtar', '51 - Ouled Djellal', '52 - Béni Abbès',
+      '53 - In Salah', '54 - In Guezzam', '55 - Touggourt', '56 - Djanet',
+      '57 - El M\'Ghair', '58 - El Meniaa'];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          height: MediaQuery.of(context).size.height * 0.75,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(children: [
+            const SizedBox(height: 10),
+            Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Text("Mes wilayas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A237E))),
+                if (tempSelected.isNotEmpty) ...[
+                  const SizedBox(width: 10),
+                  CircleAvatar(
+                    radius: 12,
+                    backgroundColor: const Color(0xFF2979FF),
+                    child: Text('${tempSelected.length}',
+                        style: const TextStyle(color: Colors.white, fontSize: 11)),
+                  ),
+                ]
+              ]),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: wilayas.length,
+                itemBuilder: (_, i) {
+                  final w = wilayas[i];
+                  final isSel = tempSelected.contains(w);
+                  return GestureDetector(
+                    onTap: () => setModalState(() =>
+                    isSel ? tempSelected.remove(w) : tempSelected.add(w)),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: isSel ? const Color(0xFF2979FF) : Colors.grey[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: isSel ? const Color(0xFF2979FF) : Colors.black12),
+                      ),
+                      child: Row(children: [
+                        Icon(isSel ? Icons.check_box : Icons.check_box_outline_blank,
+                            color: isSel ? Colors.white : Colors.grey, size: 20),
+                        const SizedBox(width: 12),
+                        Text(w, style: TextStyle(
+                            color: isSel ? Colors.white : const Color(0xFF1A237E),
+                            fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
+              child: SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                  onPressed: tempSelected.isEmpty ? null : () async {
+                    final result = await ApiService.updateWilayas(tempSelected);
+                    if (result['error'] == null) {
+                      setState(() => selectedWilayas = List.from(tempSelected));
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Wilayas mises à jour ✓'),
+                          backgroundColor: Colors.green));
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text(result['error']),
+                          backgroundColor: Colors.red));
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2979FF),
+                    disabledBackgroundColor: Colors.black12,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: Text(
+                      tempSelected.isEmpty ? 'Sélectionner au moins une' : 'Confirmer (${tempSelected.length})',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
   // ── Logout ─────────────────────────────────────────────────────
   void _logout() {
     showDialog(
@@ -122,7 +244,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7))),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => Loginpage())),
             child: const Text('Annuler'),
           ),
           TextButton(
@@ -161,10 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             icon: const Icon(Icons.refresh),
             onPressed: _loadProfile,
           ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {},
-          ),
+
         ],
       ),
       body: _isLoading
@@ -475,14 +595,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
               icon: Icons.local_shipping_outlined,
               title: 'Mes camions',
               onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProfileScreen()))),
+                  MaterialPageRoute(builder: (_) => const MyCamionsScreen()))),
           _buildDivider(),
 
           _buildMenuItem(
               icon: Icons.payment_outlined,
               title: 'Paiements & Facturation',
               onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProfileScreen()))),
+                  MaterialPageRoute(builder: (_) => const PaymentsScreen()))),
           _buildDivider(),
 
           _buildMenuItem(
@@ -492,7 +612,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   context,
                   MaterialPageRoute(
                       builder: (_) =>
-                      const ProfileScreen()))),
+                      const NotificationsSettingsScreen()))),
           _buildDivider(),
 
           _buildMenuItem(
@@ -500,7 +620,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               title: 'Langue',
               subtitle: 'Français',
               onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProfileScreen()))),
+                  MaterialPageRoute(builder: (_) => const LanguageScreen()))),
           _buildDivider(),
 
           _buildMenuItem(
@@ -509,7 +629,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                      builder: (_) => const ProfileScreen()))),
+                      builder: (_) => const HelpSupportScreen()))),
           _buildDivider(),
 
           ValueListenableBuilder<bool>(
@@ -527,6 +647,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
               );
             },
           ),
+          ListTile(
+            onTap: _showWilayaPicker,
+            leading: const Icon(Icons.map_outlined, color: Color(0xFF2979FF)),
+            title: const Text("Mes wilayas", style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+              selectedWilayas.isEmpty ? 'Aucune wilaya' : '${selectedWilayas.length} wilaya(s)',
+              style: const TextStyle(color: Colors.grey),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+          ),
+
 
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -539,7 +670,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   backgroundColor: const Color(0xFF1E3A8A),
                   foregroundColor: Colors.white),
             ),
+
           ),
+
         ],
       ),
     );
@@ -964,8 +1097,1585 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   }
 }
 
-// ================================================================
-// Keep the rest of your screens unchanged below this line:
-// MyCamionsScreen, AddTruckBottomSheet, PaymentsScreen,
-// NotificationsSettingsScreen, LanguageScreen, HelpSupportScreen
-// ================================================================
+// ============================================================
+// 2. MES CAMIONS
+// ============================================================
+class MyCamionsScreen extends StatefulWidget {
+  const MyCamionsScreen({Key? key}) : super(key: key);
+
+  @override
+  State<MyCamionsScreen> createState() => _MyCamionsScreenState();
+}
+
+class _MyCamionsScreenState extends State<MyCamionsScreen> {
+  final List<Map<String, dynamic>> trucks = [
+    {
+      'id': '1',
+      'name': 'Camion 1',
+      'plate': '16-001-231',
+      'capacity': 5400,
+      'status': 'Actif',
+      'model': 'Mercedes Actros',
+      'year': '2021',
+      'lastService': '15/01/2025',
+      'nextService': '15/07/2025',
+    },
+    {
+      'id': '2',
+      'name': 'Camion 2',
+      'plate': '16-002-418',
+      'capacity': 5400,
+      'status': 'En maintenance',
+      'model': 'MAN TGS',
+      'year': '2019',
+      'lastService': '10/02/2025',
+      'nextService': '10/08/2025',
+    },
+  ];
+
+  void _showAddTruckDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => const AddTruckBottomSheet(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text('Mes camions'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showAddTruckDialog,
+        backgroundColor: const Color(0xFF1E3A8A),
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Ajouter un camion'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Résumé
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildSummaryItem('${trucks.length}', 'Camions', Icons.local_shipping),
+                  _buildSummaryItem(
+                    '${trucks.where((t) => t['status'] == 'Actif').length}',
+                    'Actifs',
+                    Icons.check_circle_outline,
+                  ),
+                  _buildSummaryItem(
+                    '${trucks.fold(0, (sum, t) => sum + (t['capacity'] as int))} L',
+                    'Capacité totale',
+                    Icons.water_drop_outlined,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Liste des camions
+            ...trucks.map((truck) => _buildTruckCard(truck)).toList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSummaryItem(String value, String label, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, color: Colors.white70, size: 24),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+      ],
+    );
+  }
+
+  Widget _buildTruckCard(Map<String, dynamic> truck) {
+    final isActive = truck['status'] == 'Actif';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // En-tête camion
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E3A8A).withOpacity(0.05),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E3A8A).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.local_shipping, color: Color(0xFF1E3A8A), size: 28),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        truck['name'],
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        truck['model'],
+                        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? Colors.green.withOpacity(0.1)
+                        : Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    truck['status'],
+                    style: TextStyle(
+                      color: isActive ? Colors.green : Colors.orange,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Détails
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                _buildTruckDetail(Icons.pin_outlined, 'Immatriculation', truck['plate']),
+                const SizedBox(height: 12),
+                _buildTruckDetail(Icons.water_drop_outlined, 'Capacité', '${truck['capacity']} L'),
+                const SizedBox(height: 12),
+                _buildTruckDetail(Icons.calendar_today_outlined, 'Année', truck['year']),
+                const SizedBox(height: 12),
+                _buildTruckDetail(Icons.build_outlined, 'Dernier entretien', truck['lastService']),
+                const SizedBox(height: 12),
+                _buildTruckDetail(
+                    Icons.event_outlined, 'Prochain entretien', truck['nextService']),
+              ],
+            ),
+          ),
+
+          // Actions
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {},
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Modifier'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF1E3A8A),
+                      side: const BorderSide(color: Color(0xFF1E3A8A)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {},
+                    icon: const Icon(Icons.history, size: 18),
+                    label: const Text('Historique'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E3A8A),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTruckDetail(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, color: const Color(0xFF1E3A8A), size: 20),
+        const SizedBox(width: 12),
+        Text(label, style: TextStyle(fontSize: 14, color: Colors.grey[600])),
+        const Spacer(),
+        Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+}
+
+class AddTruckBottomSheet extends StatelessWidget {
+  const AddTruckBottomSheet({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+        left: 20,
+        right: 20,
+        top: 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Ajouter un camion',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 20),
+          _buildInput('Nom du camion', Icons.local_shipping_outlined),
+          const SizedBox(height: 12),
+          _buildInput('Immatriculation', Icons.pin_outlined),
+          const SizedBox(height: 12),
+          _buildInput('Capacité (litres)', Icons.water_drop_outlined,
+              keyboardType: TextInputType.number),
+          const SizedBox(height: 12),
+          _buildInput('Modèle', Icons.directions_car_outlined),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1E3A8A),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                elevation: 0,
+              ),
+              child: const Text('Ajouter', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInput(String label, IconData icon, {TextInputType? keyboardType}) {
+    return TextFormField(
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: const Color(0xFF1E3A8A)),
+        filled: true,
+        fillColor: Colors.grey[50],
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[200]!),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[200]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFF1E3A8A), width: 2),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 3. PAIEMENTS & FACTURATION
+// ============================================================
+class PaymentsScreen extends StatefulWidget {
+  const PaymentsScreen({Key? key}) : super(key: key);
+
+  @override
+  State<PaymentsScreen> createState() => _PaymentsScreenState();
+}
+
+class _PaymentsScreenState extends State<PaymentsScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  final List<Map<String, dynamic>> transactions = [
+    {
+      'id': 'TXN-001',
+      'date': '15/03/2025',
+      'amount': 12500,
+      'type': 'credit',
+      'description': 'Livraison #LV-2341',
+      'status': 'Complété',
+    },
+    {
+      'id': 'TXN-002',
+      'date': '14/03/2025',
+      'amount': 8200,
+      'type': 'credit',
+      'description': 'Livraison #LV-2338',
+      'status': 'Complété',
+    },
+    {
+      'id': 'TXN-003',
+      'date': '13/03/2025',
+      'amount': 2000,
+      'type': 'debit',
+      'description': 'Commission plateforme',
+      'status': 'Prélevé',
+    },
+    {
+      'id': 'TXN-004',
+      'date': '12/03/2025',
+      'amount': 9750,
+      'type': 'credit',
+      'description': 'Livraison #LV-2330',
+      'status': 'Complété',
+    },
+    {
+      'id': 'TXN-005',
+      'date': '10/03/2025',
+      'amount': 15000,
+      'type': 'withdrawal',
+      'description': 'Virement bancaire',
+      'status': 'Traité',
+    },
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text('Paiements & Facturation'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white60,
+          tabs: const [
+            Tab(text: 'Transactions'),
+            Tab(text: 'Facturation'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildTransactionsTab(),
+          _buildBillingTab(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionsTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // Solde actuel
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Solde disponible',
+                  style: TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '28 450 DZD',
+                  style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {},
+                        icon: const Icon(Icons.arrow_downward, size: 18),
+                        label: const Text('Retirer'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xFF1E3A8A),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {},
+                        icon: const Icon(Icons.receipt_outlined, size: 18),
+                        label: const Text('Relevé'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Stats rapides
+          Row(
+            children: [
+              Expanded(
+                child: _buildQuickStat('Ce mois', '30 450 DZD', Icons.trending_up, Colors.green),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildQuickStat('Commission', '2 000 DZD', Icons.percent, Colors.red),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 20),
+
+          // Transactions
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Historique des transactions',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...transactions.map((t) => _buildTransactionItem(t)).toList(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickStat(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionItem(Map<String, dynamic> t) {
+    Color color;
+    IconData icon;
+    String sign;
+
+    switch (t['type']) {
+      case 'credit':
+        color = Colors.green;
+        icon = Icons.arrow_downward;
+        sign = '+';
+        break;
+      case 'debit':
+        color = Colors.red;
+        icon = Icons.arrow_upward;
+        sign = '-';
+        break;
+      default:
+        color = Colors.blue;
+        icon = Icons.swap_horiz;
+        sign = '-';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(t['description'],
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(t['date'],
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '$sign${t['amount']} DZD',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  t['status'],
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillingTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // Informations de compte bancaire
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Compte bancaire',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    TextButton(
+                      onPressed: () {},
+                      child: const Text('Modifier'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF1E3A8A), Color(0xFF3B82F6)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('CCP', style: TextStyle(color: Colors.white, fontSize: 14)),
+                          Icon(Icons.account_balance, color: Colors.white70),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        '0021 4568 9012 3456',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Ahmed Transport Eau',
+                        style: TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Factures récentes
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Factures récentes',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                _buildInvoiceItem('FAC-2025-03', 'Mars 2025', '30 450 DZD', 'Payée'),
+                _buildInvoiceItem('FAC-2025-02', 'Février 2025', '25 200 DZD', 'Payée'),
+                _buildInvoiceItem('FAC-2025-01', 'Janvier 2025', '18 750 DZD', 'Payée'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInvoiceItem(String id, String period, String amount, String status) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E3A8A).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.receipt_long, color: Color(0xFF1E3A8A), size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(id, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(period, style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(amount,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+              Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  status,
+                  style: const TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            onPressed: () {},
+            icon: const Icon(Icons.download_outlined, color: Color(0xFF1E3A8A), size: 20),
+            constraints: const BoxConstraints(),
+            padding: EdgeInsets.zero,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 4. NOTIFICATIONS
+// ============================================================
+class NotificationsSettingsScreen extends StatefulWidget {
+  const NotificationsSettingsScreen({Key? key}) : super(key: key);
+
+  @override
+  State<NotificationsSettingsScreen> createState() =>
+      _NotificationsSettingsScreenState();
+}
+
+class _NotificationsSettingsScreenState
+    extends State<NotificationsSettingsScreen> {
+  Map<String, bool> notifSettings = {
+    'new_order': true,
+    'order_cancelled': true,
+    'payment_received': true,
+    'maintenance_reminder': true,
+    'rating_received': false,
+    'promotions': false,
+    'system_updates': true,
+    'weekly_report': false,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text('Notifications'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Activer tout
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.notifications_active, color: Colors.white, size: 40),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Notifications activées',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          'Personnalisez vos préférences ci-dessous',
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: notifSettings.values.any((v) => v),
+                    onChanged: (val) {
+                      setState(() {
+                        notifSettings.updateAll((k, v) => val);
+                      });
+                    },
+                    activeColor: Colors.white,
+                    activeTrackColor: Colors.white30,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            _buildNotifCategory(
+              'Commandes',
+              Icons.delivery_dining,
+              [
+                _buildNotifItem('new_order', 'Nouvelle commande', 'Quand vous recevez une commande'),
+                _buildNotifItem('order_cancelled', 'Annulation de commande', 'Quand une commande est annulée'),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            _buildNotifCategory(
+              'Paiements',
+              Icons.payment,
+              [
+                _buildNotifItem('payment_received', 'Paiement reçu', 'Confirmation de paiement'),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            _buildNotifCategory(
+              'Véhicules',
+              Icons.local_shipping,
+              [
+                _buildNotifItem('maintenance_reminder', 'Rappel entretien', 'Rappel avant la date d\'entretien'),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            _buildNotifCategory(
+              'Autres',
+              Icons.more_horiz,
+              [
+                _buildNotifItem('rating_received', 'Nouvelle évaluation', 'Quand un client vous évalue'),
+                _buildNotifItem('promotions', 'Promotions & Offres', 'Offres spéciales de la plateforme'),
+                _buildNotifItem('system_updates', 'Mises à jour système', 'Annonces importantes'),
+                _buildNotifItem('weekly_report', 'Rapport hebdomadaire', 'Résumé de votre activité'),
+              ],
+            ),
+
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotifCategory(String title, IconData icon, List<Widget> items) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E3A8A).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: const Color(0xFF1E3A8A), size: 20),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  title,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          ...items,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotifItem(String key, String title, String subtitle) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                Text(subtitle, style: TextStyle(fontSize: 13, color: Colors.grey[500])),
+              ],
+            ),
+          ),
+          Switch(
+            value: notifSettings[key] ?? false,
+            onChanged: (val) => setState(() => notifSettings[key] = val),
+            activeColor: const Color(0xFF1E3A8A),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 5. LANGUE
+// ============================================================
+class LanguageScreen extends StatefulWidget {
+  const LanguageScreen({Key? key}) : super(key: key);
+
+  @override
+  State<LanguageScreen> createState() => _LanguageScreenState();
+}
+
+class _LanguageScreenState extends State<LanguageScreen> {
+  String _selectedLanguage = 'fr';
+
+  final List<Map<String, String>> languages = [
+    {'code': 'fr', 'name': 'Français', 'native': 'Français', 'flag': '🇫🇷'},
+    {'code': 'ar', 'name': 'Arabe', 'native': 'العربية', 'flag': '🇩🇿'},
+    {'code': 'en', 'name': 'Anglais', 'native': 'English', 'flag': '🇬🇧'},
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text('Langue'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E3A8A).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF1E3A8A).withOpacity(0.2)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.language, color: Color(0xFF1E3A8A)),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Choisissez la langue de l\'application',
+                      style: TextStyle(fontSize: 14, color: Color(0xFF1E3A8A)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: languages.asMap().entries.map((entry) {
+                  final lang = entry.value;
+                  final isLast = entry.key == languages.length - 1;
+                  final isSelected = _selectedLanguage == lang['code'];
+
+                  return Column(
+                    children: [
+                      InkWell(
+                        onTap: () => setState(() => _selectedLanguage = lang['code']!),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Row(
+                            children: [
+                              Text(lang['flag']!, style: const TextStyle(fontSize: 32)),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      lang['name']!,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: isSelected
+                                            ? FontWeight.bold
+                                            : FontWeight.w500,
+                                        color: isSelected
+                                            ? const Color(0xFF1E3A8A)
+                                            : Colors.black87,
+                                      ),
+                                    ),
+                                    Text(
+                                      lang['native']!,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: isSelected
+                                            ? const Color(0xFF2563EB)
+                                            : Colors.grey[500],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (isSelected)
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF1E3A8A),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.check, color: Colors.white, size: 18),
+                                )
+                              else
+                                Container(
+                                  width: 26,
+                                  height: 26,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.grey[300]!),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (!isLast)
+                        Divider(height: 1, indent: 72, color: Colors.grey[200]),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  // TODO: Appliquer le changement de langue
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Langue mise à jour'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                  Navigator.pop(context);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1E3A8A),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  'Appliquer',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// 6. AIDE & SUPPORT
+// ============================================================
+class HelpSupportScreen extends StatefulWidget {
+  const HelpSupportScreen({Key? key}) : super(key: key);
+
+  @override
+  State<HelpSupportScreen> createState() => _HelpSupportScreenState();
+}
+
+class _HelpSupportScreenState extends State<HelpSupportScreen> {
+  final List<Map<String, dynamic>> faqs = [
+    {
+      'question': 'Comment ajouter un nouveau camion ?',
+      'answer':
+      'Allez dans "Mes camions" puis cliquez sur le bouton "Ajouter un camion". Remplissez les informations requises et validez.',
+      'isOpen': false,
+    },
+    {
+      'question': 'Comment recevoir mes paiements ?',
+      'answer':
+      'Les paiements sont versés automatiquement sur votre compte CCP après chaque livraison confirmée. Les délais sont de 24 à 48h ouvrables.',
+      'isOpen': false,
+    },
+    {
+      'question': 'Comment annuler une livraison ?',
+      'answer':
+      'Vous pouvez annuler une livraison depuis l\'écran de détail de la commande. Notez qu\'une annulation fréquente peut affecter votre note.',
+      'isOpen': false,
+    },
+    {
+      'question': 'Que faire en cas de panne du camion ?',
+      'answer':
+      'Contactez immédiatement le support via le bouton d\'urgence. Informez aussi le client via l\'application. Notre équipe vous assistera.',
+      'isOpen': false,
+    },
+    {
+      'question': 'Comment améliorer ma note ?',
+      'answer':
+      'Livrez dans les délais, maintenez la qualité de l\'eau, soyez professionnel avec les clients et répondez rapidement aux commandes.',
+      'isOpen': false,
+    },
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text('Aide & Support'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Contact rapide
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'Besoin d\'aide ?',
+                    style: TextStyle(
+                        color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Notre équipe est disponible 7j/7 de 8h à 20h',
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildContactBtn(
+                          Icons.phone,
+                          'Appeler',
+                              () {},
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildContactBtn(
+                          Icons.chat_bubble_outline,
+                          'Chat',
+                              () {},
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildContactBtn(
+                          Icons.email_outlined,
+                          'Email',
+                              () {},
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Urgence
+            GestureDetector(
+              onTap: () {},
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.red[100],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.emergency, color: Colors.red, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Assistance d\'urgence',
+                            style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red),
+                          ),
+                          Text(
+                            'Panne, accident ou problème critique',
+                            style: TextStyle(fontSize: 13, color: Colors.red),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right, color: Colors.red),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // FAQ
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Questions fréquentes',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  ...faqs.asMap().entries.map((entry) {
+                    return _buildFaqItem(entry.key, entry.value);
+                  }).toList(),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Envoyer un ticket
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Signaler un problème',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    maxLines: 4,
+                    decoration: InputDecoration(
+                      hintText: 'Décrivez votre problème...',
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Colors.grey[200]!),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Colors.grey[200]!),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFF1E3A8A), width: 2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {},
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1E3A8A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: const Text(
+                        'Envoyer le ticket',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContactBtn(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white30),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: Colors.white, size: 22),
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFaqItem(int index, Map<String, dynamic> faq) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: () {
+            setState(() {
+              faqs[index]['isOpen'] = !faqs[index]['isOpen'];
+            });
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E3A8A).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.help_outline,
+                    color: Color(0xFF1E3A8A),
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        faq['question'],
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                      if (faq['isOpen']) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          faq['answer'],
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[600],
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  faq['isOpen'] ? Icons.expand_less : Icons.expand_more,
+                  color: Colors.grey,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (index < faqs.length - 1)
+          Divider(height: 1, color: Colors.grey[200]),
+      ],
+    );
+  }
+}

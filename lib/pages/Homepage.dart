@@ -92,7 +92,7 @@ class _HomepageState extends State<Homepage> {
                   ),
                   SizedBox(height: screenHeight * 0.09),
                   Text(
-                    'Pure water, delivered.',
+                    'Eau pure, livrée.',
                     style: TextStyle(
                       fontSize: screenWidth * 0.05,
                       fontWeight: FontWeight.w600,
@@ -102,7 +102,7 @@ class _HomepageState extends State<Homepage> {
                   ),
                   SizedBox(height: screenHeight * 0.009),
                   Text(
-                    'Algerias first water delivery app.',
+                    'La première application de livraison d\'eau en Algérie.',
                     style: TextStyle(
                       fontSize: screenWidth * 0.033,
                       fontWeight: FontWeight.w900,
@@ -145,7 +145,7 @@ class _HomepageState extends State<Homepage> {
                       onTap: () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) => Login())),
                       child: Text(
-                        'get started',
+                        'commencer',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: screenWidth * 0.05,

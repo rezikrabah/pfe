@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:test2/client/historique.dart';
 import 'package:test2/pages/Loginpage.dart';
 import 'package:test2/main.dart'; // Pour themeNotifier
-import 'clientpage.dart';
+
 import 'commandes.dart';
 import 'package:test2/client/suivi.dart';
 import '../services/api_service.dart';
@@ -51,14 +51,7 @@ class _profileState extends State<profile> {
           'Profil',
           style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.5),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, size: 26, color: Colors.white),
-            onPressed: () {
-              // TODO: Naviguer vers paramètres avancés
-            },
-          ),
-        ],
+
       ),
 
       // ── Body ────────────────────────────────────────────
@@ -295,15 +288,6 @@ class _profileState extends State<profile> {
         ),
       ),
 
-      // ── FAB (Home) ───────────────────────────────────────
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: kPrimaryDark,
-        shape: const CircleBorder(),
-        mini: true,
-        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => clientpage())),
-        child: const Icon(CupertinoIcons.home, color: Colors.white),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
       // ── Bottom Navigation ────────────────────────────────
       bottomNavigationBar: BottomAppBar(

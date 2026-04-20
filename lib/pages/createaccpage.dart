@@ -52,9 +52,9 @@ class _createaccpageState extends State<createaccpage> {
 
     setState(() => _isLoading = false);
 
-    if (result['error'] != null) {
+    if (result['erreur'] != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result['error']), backgroundColor: Colors.red),
+        SnackBar(content: Text(result['erreur']), backgroundColor: Colors.red),
       );
       return;
     }
@@ -78,7 +78,7 @@ class _createaccpageState extends State<createaccpage> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['msg'] ?? 'Registration failed'),
+          content: Text(result['msg'] ?? 'L\'inscription a échoué'),
           backgroundColor: Colors.red,
         ),
       );
@@ -154,7 +154,7 @@ class _createaccpageState extends State<createaccpage> {
       appBar: AppBar(
         iconTheme: const IconThemeData(color: Colors.white),
         title: Text(
-          'CREATE YOUR ACCOUNT',
+          'CRÉEZ VOTRE COMPTE',
           style: TextStyle(
             color: const Color(0xFFB4DCE6),
             fontSize: screenWidth * 0.028,
@@ -204,7 +204,7 @@ class _createaccpageState extends State<createaccpage> {
               SizedBox(height: screenHeight * 0.015),
 
               Text(
-                'Sign Up',
+                'S\'inscrire',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: screenWidth * 0.055,
@@ -215,7 +215,7 @@ class _createaccpageState extends State<createaccpage> {
               SizedBox(height: screenHeight * 0.005),
 
               Text(
-                'Add your details to get started',
+                'Ajoutez vos coordonnées pour commencer',
                 style: TextStyle(
                   color: const Color(0xFF9EC7CF),
                   fontSize: screenWidth * 0.033,
@@ -228,20 +228,20 @@ class _createaccpageState extends State<createaccpage> {
               Row(children: [
                 Expanded(child: _buildField(
                   controller: _nomController,
-                  label: 'Last name', hint: 'Doe',
+                  label: 'Nom de famille', hint: 'Doe',
                   icon: Icons.badge_outlined,
                   screenWidth: screenWidth,
                   screenHeight: screenHeight,
-                  validator: (v) => v!.isEmpty ? 'Required' : null,
+                  validator: (v) => v!.isEmpty ? 'Requis' : null,
                 )),
                 SizedBox(width: screenWidth * 0.03),
                 Expanded(child: _buildField(
                   controller: _prenomController,
-                  label: 'First name', hint: 'John',
+                  label: 'Prénom', hint: 'John',
                   icon: Icons.person_outline,
                   screenWidth: screenWidth,
                   screenHeight: screenHeight,
-                  validator: (v) => v!.isEmpty ? 'Required' : null,
+                  validator: (v) => v!.isEmpty ? 'Requis' : null,
                 )),
               ]),
 
@@ -256,8 +256,8 @@ class _createaccpageState extends State<createaccpage> {
                 screenHeight: screenHeight,
                 keyboardType: TextInputType.emailAddress,
                 validator: (v) {
-                  if (v!.isEmpty) return 'Please enter your email';
-                  if (!v.contains('@')) return 'Enter a valid email';
+                  if (v!.isEmpty) return 'Veuillez entrer votre email';
+                  if (!v.contains('@')) return 'Entrez un email valide';
                   return null;
                 },
               ),
@@ -267,12 +267,12 @@ class _createaccpageState extends State<createaccpage> {
               // ── Phone ────────────────────────────────
               _buildField(
                 controller: _phoneController,
-                label: 'Phone number', hint: '0555 123 456',
+                label: 'Numéro de téléphone', hint: '0555 123 456',
                 icon: Icons.phone_outlined,
                 screenWidth: screenWidth,
                 screenHeight: screenHeight,
                 keyboardType: TextInputType.phone,
-                validator: (v) => v!.isEmpty ? 'Required' : null,
+                validator: (v) => v!.isEmpty ? 'Requis' : null,
               ),
 
               SizedBox(height: screenHeight * 0.015),
@@ -280,7 +280,7 @@ class _createaccpageState extends State<createaccpage> {
               // ── Password ─────────────────────────────
               _buildField(
                 controller: _passwordController,
-                label: 'Password', hint: '••••••••',
+                label: 'Mot de passe', hint: '••••••••',
                 icon: Icons.lock_outline,
                 screenWidth: screenWidth,
                 screenHeight: screenHeight,
@@ -296,8 +296,8 @@ class _createaccpageState extends State<createaccpage> {
                   onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                 ),
                 validator: (v) {
-                  if (v!.isEmpty) return 'Please enter your password';
-                  if (v.length < 8) return 'At least 8 characters';
+                  if (v!.isEmpty) return 'Veuillez entrer votre mot de passe';
+                  if (v.length < 8) return 'Au moins 8 caractères';
                   return null;
                 },
               ),
@@ -307,7 +307,7 @@ class _createaccpageState extends State<createaccpage> {
               // ── Confirm password ──────────────────────
               _buildField(
                 controller: _confirmPasswordController,
-                label: 'Confirm password', hint: '••••••••',
+                label: 'Confirmez le mot de passe', hint: '••••••••',
                 icon: Icons.lock_outline,
                 screenWidth: screenWidth,
                 screenHeight: screenHeight,
@@ -323,8 +323,8 @@ class _createaccpageState extends State<createaccpage> {
                   onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
                 ),
                 validator: (v) {
-                  if (v!.isEmpty) return 'Please confirm your password';
-                  if (v != _passwordController.text) return 'Passwords do not match';
+                  if (v!.isEmpty) return 'Veuillez confirmer votre mot de passe';
+                  if (v != _passwordController.text) return 'Les mots de passe ne correspondent pas';
                   return null;
                 },
               ),
@@ -334,11 +334,11 @@ class _createaccpageState extends State<createaccpage> {
               // ── Address ───────────────────────────────
               _buildField(
                 controller: _adresseController,
-                label: 'Address', hint: 'Enter your address',
+                label: 'Adresse', hint: 'Entrez votre adresse',
                 icon: Icons.location_on_outlined,
                 screenWidth: screenWidth,
                 screenHeight: screenHeight,
-                validator: (v) => v!.isEmpty ? 'Required' : null,
+                validator: (v) => v!.isEmpty ? 'Requis' : null,
               ),
 
               SizedBox(height: screenHeight * 0.03),
@@ -364,7 +364,7 @@ class _createaccpageState extends State<createaccpage> {
                         color: Colors.white, strokeWidth: 2),
                   )
                       : Text(
-                    'Sign Up',
+                    'S\'inscrire',
                     style: TextStyle(
                       fontSize: screenWidth * 0.04,
                       fontWeight: FontWeight.w600,
@@ -378,7 +378,7 @@ class _createaccpageState extends State<createaccpage> {
               // ── Login link ────────────────────────────
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Text(
-                  'Already have an account? ',
+                  'Vous avez déjà un compte? ',
                   style: TextStyle(
                     color: const Color(0xFF9EC7CF),
                     fontSize: screenWidth * 0.033,
@@ -388,7 +388,7 @@ class _createaccpageState extends State<createaccpage> {
                   onTap: () => Navigator.push(context,
                       MaterialPageRoute(builder: (_) => Loginpage())),
                   child: Text(
-                    'Log in',
+                    'Se connecter',
                     style: TextStyle(
                       color: const Color(0xFF00C8F0),
                       fontSize: screenWidth * 0.033,

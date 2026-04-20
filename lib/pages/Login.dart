@@ -60,7 +60,7 @@ class Login extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Log in',
+                        'Se connecter',
                         style: TextStyle(
                           color: const Color(0xFF4ECDC4),
                           fontSize: screenWidth * 0.045,
@@ -100,7 +100,7 @@ class Login extends StatelessWidget {
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.08),
                   child: Text(
-                    'Welcome to the first\nwater delivery application',
+                    'Bienvenue dans la première application de livraison d\'eau',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: const Color(0xFFB8E3F0),
@@ -119,7 +119,7 @@ class Login extends StatelessWidget {
                   child: Column(
                     children: [
                       _GlassButton(
-                        label: 'Login',
+                        label: 'Se connecter',
                         icon: Icons.login_rounded,
                         filled: true,
                         screenWidth: screenWidth,
@@ -129,7 +129,7 @@ class Login extends StatelessWidget {
                       ),
                       SizedBox(height: screenHeight * 0.018),
                       _GlassButton(
-                        label: 'Create an account',
+                        label: 'Créer un compte',
                         icon: Icons.person_add_outlined,
                         filled: false,
                         screenWidth: screenWidth,

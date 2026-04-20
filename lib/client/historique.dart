@@ -2,7 +2,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:test2/client/profile.dart';
 import '../services/api_service.dart';
-import 'clientpage.dart';
 import 'commandes.dart';
 import 'package:test2/client/suivi.dart';
 
@@ -118,14 +117,8 @@ class _historiqueState extends State<historique> {
         ],
       ),
 
-      // ── FAB ──────────────────────────────────────────────
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF4ECDC4),
-        shape: const CircleBorder(),
-        elevation: 4,
-        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => clientpage())),
-        child: const Icon(CupertinoIcons.home, color: Color(0xFF081E27), size: 22),
-      ),
+
+
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
       bottomNavigationBar: _buildBottomBar(context),

@@ -8,7 +8,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 
 import 'chauffeur_review_screen.dart';
-import 'heatmap_painter.dart';
+
 import 'orders_screen.dart';
 import 'history_screen.dart';
 import 'profile_screen.dart';
@@ -235,10 +235,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     // Move map to chauffeur starting position
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _mapController.move(route.first, 14.0); // ← zoom to truck
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _startSimulation();
-      });
+      final providerState = context.findAncestorStateOfType<ProviderHomeScreenState>();
+      if (providerState != null) {
+        providerState._testOrders = [];        // ← ensure no test orders
+        providerState._isPreviewRoute = false;
+        providerState.switchToMapTab();        // ← switch to map
+        providerState._loadOptimizedRoutes();  // ← load REAL routes from API
+      }
     });
   }
 
@@ -559,46 +562,46 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       // ── PENDING ──────────────────────────────
                       if (pending.isNotEmpty) ...[
                         _sectionHeader('En attente', Colors.orange, pending.length),
-              ...pending.map((stop) => Column(
-            children: [
-              // chauffeur badge
-              if (_stopChauffeur[stop.mongoId] != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.person, size: 13, color: Color(0xFF1E3A8A)),
-                      const SizedBox(width: 4),
-                      Text(
-                        _stopChauffeur[stop.mongoId]!,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF1E3A8A),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              _orderTile(
-                stop: stop,
-                status: 'pending',
-                onAccept: () {
-                  setModal(() => setState(() {        // ← setModal + setState together
-                    _orderStatus[stop.mongoId] = 'accepted';
-                    _isPreviewRoute = false;
-                  }));
-                  Navigator.pop(ctx);
-                  _rebuildRouteFromAccepted();
-                },
-                onReject: () {
-                  setModal(() => setState(() =>
-                  _orderStatus[stop.mongoId] = 'rejected'));
-                  _rebuildRouteFromAccepted();
-                },
-              ),
-            ],
-          )),
+                        ...pending.map((stop) => Column(
+                          children: [
+                            // chauffeur badge
+                            if (_stopChauffeur[stop.mongoId] != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.person, size: 13, color: Color(0xFF1E3A8A)),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _stopChauffeur[stop.mongoId]!,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF1E3A8A),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            _orderTile(
+                              stop: stop,
+                              status: 'pending',
+                              onAccept: () {
+                                setModal(() => setState(() {        // ← setModal + setState together
+                                  _orderStatus[stop.mongoId] = 'accepted';
+                                  _isPreviewRoute = false;
+                                }));
+                                Navigator.pop(ctx);
+                                _rebuildRouteFromAccepted();
+                              },
+                              onReject: () {
+                                setModal(() => setState(() =>
+                                _orderStatus[stop.mongoId] = 'rejected'));
+                                _rebuildRouteFromAccepted();
+                              },
+                            ),
+                          ],
+                        )),
                       ],
 
                       // ── ACCEPTED ─────────────────────────────
@@ -1044,6 +1047,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       currentIndex    = 0;
       _isPreviewRoute = false; // orders were accepted — route is now active
     });
+  }
+  void reloadRealRoutes() {
+    setState(() {
+      _testOrders     = [];
+      _isPreviewRoute = false;
+    });
+    _loadOptimizedRoutes();
   }
 
   // ─────────────────────────────────────────────────────────
@@ -1533,12 +1543,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   Future<void> _buildRouteFromTestOrders() async {
     await _loadOptimizedRoutesFromApi();
   }
-  List<HeatmapData> get _heatmapPoints => _optimizedStops
-      .map((s) => HeatmapData(
-    s.position,
-    weight: (s.quantity / 500).clamp(0.5, 5.0),
-  ))
-      .toList();
+
   // ─────────────────────────────────────────────────────────
   // REAL MODE: VRP solution from API, NN fallback
   // ─────────────────────────────────────────────────────────
@@ -2357,340 +2362,340 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ? const Color(0xFF455A64)   // grey-blue for preview
         : const Color(0xFF1E3A8A);  // dark blue for active
     return ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 1, // ← max 45% of screen
-        ),
-   child:  Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color:        Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(
-            color:      Colors.black.withOpacity(0.15),
-            blurRadius: 20,
-            offset:     const Offset(0, 4))],
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 1, // ← max 45% of screen
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child:  Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color:        Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(
+              color:      Colors.black.withOpacity(0.15),
+              blurRadius: 20,
+              offset:     const Offset(0, 4))],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
 
-          // Header
-          Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 1, vertical: 8),
-            decoration: BoxDecoration(
-              color:        headerColor,
-              borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20)),
-            ),
-            child: Column(
-              children: [
-                if (_optimizedStops.isNotEmpty)
-                  GestureDetector(
-                    onTap: _showOrderAcceptSheet,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      margin: const EdgeInsets.only(left: 40),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white54),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.checklist_rtl, color: Colors.white, size: 14),
-                          const SizedBox(width: 4),
-                          Text(
-                            _orderStatus.values.where((v) => v == 'count').isNotEmpty
-                                ? '${_orderStatus.values.where((v) => v == "count").length} en attente'
-                                : 'Commandes',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                Row(
-                  children: [
-                    Icon(
-                      _isPreviewRoute ? Icons.preview : Icons.route,
-                      color: Colors.white, size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        headerTitle,
-                        style: const TextStyle(
-                          color:      Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize:   10,
-                        ),
-                      ),
-                    ),
-                    if (_totalDistanceKm != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color:        Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${_totalDistanceKm!.toStringAsFixed(1)} km total',
-                          style: const TextStyle(
-                              color:      Colors.white,
-                              fontSize:   12,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () async {
-                        if (!_isPreviewRoute) {
-                          for (final stop in _optimizedStops) {
-                            await ApiService.cancelCommande(stop.mongoId);
-                          }
-                        }
-                        setState(() {
-                          _optimizedStops  = [];
-                          _polylines       = [];
-                          _markers         = [];
-                          _totalDistanceKm = null;
-                          _testOrders      = [];
-                          _fullRoutePoints = [];
-                          _isPreviewRoute  = false;
-                        });
-                        _stopSimulation();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _isPreviewRoute ? Colors.blueGrey : Colors.orange,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          _isPreviewRoute ? 'Effacer' : 'Annuler tout',
-                          style: const TextStyle(
-                              color:      Colors.white,
-                              fontSize:   11,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-
-          ),
-
-
-          if (!_isPreviewRoute)
+            // Header
             Container(
               padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 8),
+                  horizontal: 1, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                border: Border(
-                  bottom: BorderSide(
-                      color: Colors.orange.shade100, width: 1),
-                ),
+                color:        headerColor,
+                borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20)),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  const Icon(Icons.play_circle_outline,
-                      color: Colors.orange, size: 18),
-                  const SizedBox(width: 6),
-                  const Expanded(
-                    child: Text(
-                      'Simulation de déplacement',
-                      style: TextStyle(
-                        fontSize:   11,
-                        fontWeight: FontWeight.w600,
-                        color:      Colors.orange,
+                  if (_optimizedStops.isNotEmpty)
+                    GestureDetector(
+                      onTap: _showOrderAcceptSheet,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        margin: const EdgeInsets.only(left: 40),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white54),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.checklist_rtl, color: Colors.white, size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              _orderStatus.values.where((v) => v == 'count').isNotEmpty
+                                  ? '${_orderStatus.values.where((v) => v == "count").length} en attente'
+                                  : 'Commandes',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  if (_simRunning) ...[
-                    SizedBox(
-                      width: 60,
-                      child: LinearProgressIndicator(
-                        value: _fullRoutePoints.isEmpty
-                            ? 0
-                            : _simIndex /
-                            (_fullRoutePoints.length - 1),
-                        color:           Colors.orange,
-                        backgroundColor: Colors.orange.shade100,
-                        minHeight:       4,
-                        borderRadius:    BorderRadius.circular(2),
+                  Row(
+                    children: [
+                      Icon(
+                        _isPreviewRoute ? Icons.preview : Icons.route,
+                        color: Colors.white, size: 20,
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  _SimButton(
-                    icon:    Icons.play_arrow,
-                    color:   Colors.green,
-                    enabled: !_simRunning && _fullRoutePoints.isNotEmpty,
-                    onTap:   _showSimulationPicker,
-                    tooltip: _simStarted ? 'Reprendre' : 'Démarrer',
-                  ),
-                  const SizedBox(width: 6),
-                  _SimButton(
-                    icon:    Icons.pause,
-                    color:   Colors.orange,
-                    enabled: _simRunning,
-                    onTap:   _pauseSimulation,
-                    tooltip: 'Pause',
-                  ),
-                  const SizedBox(width: 6),
-                  _SimButton(
-                    icon:    Icons.stop,
-                    color:   Colors.red,
-                    enabled: _simStarted,
-                    onTap:   _stopSimulation,
-                    tooltip: 'Réinitialiser',
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          headerTitle,
+                          style: const TextStyle(
+                            color:      Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize:   10,
+                          ),
+                        ),
+                      ),
+                      if (_totalDistanceKm != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color:        Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${_totalDistanceKm!.toStringAsFixed(1)} km total',
+                            style: const TextStyle(
+                                color:      Colors.white,
+                                fontSize:   12,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () async {
+                          if (!_isPreviewRoute) {
+                            for (final stop in _optimizedStops) {
+                              await ApiService.cancelCommande(stop.mongoId);
+                            }
+                          }
+                          setState(() {
+                            _optimizedStops  = [];
+                            _polylines       = [];
+                            _markers         = [];
+                            _totalDistanceKm = null;
+                            _testOrders      = [];
+                            _fullRoutePoints = [];
+                            _isPreviewRoute  = false;
+                          });
+                          _stopSimulation();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _isPreviewRoute ? Colors.blueGrey : Colors.orange,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            _isPreviewRoute ? 'Effacer' : 'Annuler tout',
+                            style: const TextStyle(
+                                color:      Colors.white,
+                                fontSize:   11,
+                                fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ),
 
-          // ✅ CHANGED: in preview mode show a "go accept orders" CTA
-          if (_isPreviewRoute)
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                border: Border(
-                  bottom: BorderSide(color: Colors.blue.shade100, width: 1),
-                ),
-              ),
-              child: Row(children: [
-                Icon(Icons.info_outline,
-                    color: Colors.blue.shade400, size: 16),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'Rendez-vous sur "Commandes" pour accepter ou refuser chaque livraison',
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.blue.shade700),
-                  ),
-                ),
-
-              ]),
             ),
 
 
-          // ── Chauffeur summary button ──────────────────────────────
-          if (_testChauffeurs.isNotEmpty && _stopChauffeur.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: GestureDetector(
-                onTap: _showChauffeurSummarySheet,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E3A8A).withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF1E3A8A).withOpacity(0.3)),
+            if (!_isPreviewRoute)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  border: Border(
+                    bottom: BorderSide(
+                        color: Colors.orange.shade100, width: 1),
                   ),
-                  child: Row(children: [
-                    const Icon(Icons.people, color: Color(0xFF1E3A8A), size: 16),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${_testChauffeurs.length} chauffeurs — voir détails',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF1E3A8A),
-                        fontWeight: FontWeight.w600,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.play_circle_outline,
+                        color: Colors.orange, size: 18),
+                    const SizedBox(width: 6),
+                    const Expanded(
+                      child: Text(
+                        'Simulation de déplacement',
+                        style: TextStyle(
+                          fontSize:   11,
+                          fontWeight: FontWeight.w600,
+                          color:      Colors.orange,
+                        ),
                       ),
                     ),
-                    const Spacer(),
-                    const Icon(Icons.chevron_right, color: Color(0xFF1E3A8A), size: 16),
-                  ]),
+                    if (_simRunning) ...[
+                      SizedBox(
+                        width: 60,
+                        child: LinearProgressIndicator(
+                          value: _fullRoutePoints.isEmpty
+                              ? 0
+                              : _simIndex /
+                              (_fullRoutePoints.length - 1),
+                          color:           Colors.orange,
+                          backgroundColor: Colors.orange.shade100,
+                          minHeight:       4,
+                          borderRadius:    BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    _SimButton(
+                      icon:    Icons.play_arrow,
+                      color:   Colors.green,
+                      enabled: !_simRunning && _fullRoutePoints.isNotEmpty,
+                      onTap:   _showSimulationPicker,
+                      tooltip: _simStarted ? 'Reprendre' : 'Démarrer',
+                    ),
+                    const SizedBox(width: 6),
+                    _SimButton(
+                      icon:    Icons.pause,
+                      color:   Colors.orange,
+                      enabled: _simRunning,
+                      onTap:   _pauseSimulation,
+                      tooltip: 'Pause',
+                    ),
+                    const SizedBox(width: 6),
+                    _SimButton(
+                      icon:    Icons.stop,
+                      color:   Colors.red,
+                      enabled: _simStarted,
+                      onTap:   _stopSimulation,
+                      tooltip: 'Réinitialiser',
+                    ),
+                  ],
                 ),
+              ),
+
+            // ✅ CHANGED: in preview mode show a "go accept orders" CTA
+            if (_isPreviewRoute)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  border: Border(
+                    bottom: BorderSide(color: Colors.blue.shade100, width: 1),
+                  ),
+                ),
+                child: Row(children: [
+                  Icon(Icons.info_outline,
+                      color: Colors.blue.shade400, size: 16),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Rendez-vous sur "Commandes" pour accepter ou refuser chaque livraison',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.blue.shade700),
+                    ),
+                  ),
+
+                ]),
+              ),
+
+
+            // ── Chauffeur summary button ──────────────────────────────
+            if (_testChauffeurs.isNotEmpty && _stopChauffeur.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: GestureDetector(
+                  onTap: _showChauffeurSummarySheet,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E3A8A).withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF1E3A8A).withOpacity(0.3)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.people, color: Color(0xFF1E3A8A), size: 16),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${_testChauffeurs.length} chauffeurs — voir détails',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF1E3A8A),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      const Icon(Icons.chevron_right, color: Color(0xFF1E3A8A), size: 16),
+                    ]),
+                  ),
+                ),
+              ),
+
+            // Stop list
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 100),
+              child: ListView.separated(
+                shrinkWrap:  true,
+                padding:     const EdgeInsets.symmetric(vertical: 10),
+                itemCount:   _optimizedStops.length,
+                separatorBuilder: (_, __) =>
+                const Divider(height: 1, indent: 56),
+                itemBuilder: (_, i) {
+                  final stop  = _optimizedStops[i];
+                  final color = [
+                    Colors.blue, Colors.green, Colors.purple,
+                    Colors.orange, Colors.teal, Colors.red,
+                  ][i % 6];
+                  final displayColor =
+                  _isPreviewRoute ? color.withOpacity(0.6) : color;
+                  return ListTile(
+                    dense:   true,
+                    leading: CircleAvatar(
+                      backgroundColor: displayColor,
+                      radius:          16,
+                      child: Text('${stop.index}',
+                          style: const TextStyle(
+                              color:      Colors.white,
+                              fontSize:   12,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    title: Text(stop.clientName,
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize:   13,
+                            color: _isPreviewRoute
+                                ? Colors.black54
+                                : Colors.black87)),
+                    subtitle: stop.address.isNotEmpty
+                        ? Text(stop.address,
+                        style: const TextStyle(fontSize: 11),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis)
+                        : null,
+                    trailing: stop.distanceKm != null
+                        ? Column(
+                      mainAxisAlignment:  MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${stop.distanceKm!.toStringAsFixed(1)} km',
+                          style: TextStyle(
+                              color:      displayColor,
+                              fontSize:   12,
+                              fontWeight: FontWeight.bold),
+                        ),
+                        if (stop.durationMin != null)
+                          Text(
+                            '${stop.durationMin!.round()} min',
+                            style: const TextStyle(
+                                color:    Colors.grey,
+                                fontSize: 10),
+                          ),
+                      ],
+                    )
+                        : null,
+                    onTap: () =>
+                        _mapController.move(stop.position, 15),
+                  );
+                },
               ),
             ),
 
-          // Stop list
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 100),
-            child: ListView.separated(
-              shrinkWrap:  true,
-              padding:     const EdgeInsets.symmetric(vertical: 10),
-              itemCount:   _optimizedStops.length,
-              separatorBuilder: (_, __) =>
-              const Divider(height: 1, indent: 56),
-              itemBuilder: (_, i) {
-                final stop  = _optimizedStops[i];
-                final color = [
-                  Colors.blue, Colors.green, Colors.purple,
-                  Colors.orange, Colors.teal, Colors.red,
-                ][i % 6];
-                final displayColor =
-                _isPreviewRoute ? color.withOpacity(0.6) : color;
-                return ListTile(
-                  dense:   true,
-                  leading: CircleAvatar(
-                    backgroundColor: displayColor,
-                    radius:          16,
-                    child: Text('${stop.index}',
-                        style: const TextStyle(
-                            color:      Colors.white,
-                            fontSize:   12,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                  title: Text(stop.clientName,
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize:   13,
-                          color: _isPreviewRoute
-                              ? Colors.black54
-                              : Colors.black87)),
-                  subtitle: stop.address.isNotEmpty
-                      ? Text(stop.address,
-                      style: const TextStyle(fontSize: 11),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis)
-                      : null,
-                  trailing: stop.distanceKm != null
-                      ? Column(
-                    mainAxisAlignment:  MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        '${stop.distanceKm!.toStringAsFixed(1)} km',
-                        style: TextStyle(
-                            color:      displayColor,
-                            fontSize:   12,
-                            fontWeight: FontWeight.bold),
-                      ),
-                      if (stop.durationMin != null)
-                        Text(
-                          '${stop.durationMin!.round()} min',
-                          style: const TextStyle(
-                              color:    Colors.grey,
-                              fontSize: 10),
-                        ),
-                    ],
-                  )
-                      : null,
-                  onTap: () =>
-                      _mapController.move(stop.position, 15),
-                );
-              },
-            ),
-          ),
-
-        ],
+          ],
+        ),
       ),
-   ),
     );
   }
 

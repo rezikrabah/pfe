@@ -2,7 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:test2/fournisseur/provider_home_screen_FINAL.dart';
 import '../services/api_service.dart';
-
+import 'dart:async';
 class OrdersScreen extends StatefulWidget {
   final VoidCallback? onOrdersRegenerated;
   const OrdersScreen({Key? key, this.onOrdersRegenerated}) : super(key: key);
@@ -69,7 +69,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     'Rue', 'Avenue', 'Boulevard', 'Cité', 'Lotissement',
     'Résidence', 'Impasse', 'Quartier',
   ];
-
+  Timer? _timer;
   static const List<String> _streetNames = [
     'des Martyrs', 'de l\'Indépendance', 'Larbi Ben M\'hidi',
     'Didouche Mourad', 'des Frères Bouadou', 'AADL',
@@ -81,6 +81,60 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void initState() {
     super.initState();
+    _loadPending();
+    // Poll every 5 seconds
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _loadPending());
+  }
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadPending() async {
+    final result = await ApiService.getPendingCommandes();
+    if (!mounted) return;
+    setState(() {
+      // Map the API response to the same format orders expects
+      final newOrders = result.map<Map<String, dynamic>>((e) {
+        final id       = (e['_id'] ?? e['id'] ?? '').toString();
+        final capacite = (e['capacite'] as num?)?.toDouble() ?? 0.0;
+        final prix     = (e['prix'] as num?)?.toDouble() ?? 0.0;
+        final rawStatus = (e['status'] ?? 'en attente').toString();
+
+        final client = e['client'];
+        String clientName = 'Client';
+        if (client is Map) {
+          final nom    = client['nom']    ?? '';
+          final prenom = client['prenom'] ?? '';
+          clientName   = '$nom $prenom'.trim();
+          if (clientName.isEmpty) clientName = client['email'] ?? 'Client';
+        }
+
+        final posMap      = e['position'];
+        final double? lat = (posMap?['lat'] as num?)?.toDouble();
+        final double? lon = (posMap?['lon'] as num?)?.toDouble();
+
+        return {
+          'id':         id,
+          'clientName': clientName,
+          'address':    e['adresse'] ?? e['address'] ?? (e['wilaya'] ?? 'Adresse non renseignée'),
+          'quantity':   capacite,
+          'price':      prix > 0 ? prix : capacite * 2,
+          'distance':   0.0,
+          'duration':   0,
+          'status':     'pending',
+          'rawStatus':  rawStatus,
+          'lat':        lat,
+          'lon':        lon,
+        };
+      }).toList();
+
+      // Only add orders not already in the list (avoid duplicates)
+      final existingIds = orders.map((o) => o['id']).toSet();
+      final toAdd = newOrders.where((o) => !existingIds.contains(o['id'])).toList();
+      orders = [...orders, ...toAdd];
+    });
   }
 
   // ── GENERATE random orders ────────────────────────────────────
@@ -241,21 +295,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     if (!orderId.startsWith('test_') && !orderId.startsWith('gen_')) {
       try {
-        final chauffeurs   = await ApiService.getMyChauffeurs();
-        String chauffeurId = ApiService.userId ?? '';
-        if (chauffeurs.isNotEmpty) {
-          final available = chauffeurs
-              .where((c) => c['disponible'] == true || c['disponible'] == 1)
-              .toList();
-          if (available.isNotEmpty) {
-            chauffeurId =
-                (available.first['_id'] ?? available.first['id']).toString();
-          }
-        }
-        if (chauffeurId.isNotEmpty) {
-          await ApiService.assignCommande(
-              commandeId: orderId, chauffeurId: chauffeurId);
-        }
+        await ApiService.acceptCommande(orderId);
       } catch (_) {}
     }
   }
@@ -378,32 +418,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
       });
       return;
     }
-
-    // REAL mode
+// REAL mode
     setState(() => _acceptingOrderId = orderId);
     try {
-      final chauffeurs   = await ApiService.getMyChauffeurs();
-      String chauffeurId = ApiService.userId ?? '';
-
-      if (chauffeurs.isNotEmpty) {
-        final available = chauffeurs
-            .where((c) => c['disponible'] == true || c['disponible'] == 1)
-            .toList();
-        if (available.isNotEmpty) {
-          chauffeurId =
-              (available.first['_id'] ?? available.first['id']).toString();
-        }
-      }
-
-      if (chauffeurId.isEmpty) {
-        _showError('Impossible de récupérer votre identifiant.');
-        return;
-      }
-
-      final result = await ApiService.assignCommande(
-        commandeId:  orderId,
-        chauffeurId: chauffeurId,
-      );
+      final result = await ApiService.acceptCommande(orderId);
 
       if (result['error'] != null) { _showError(result['error']); return; }
 
@@ -413,35 +431,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
           orders[idx]['status']    = 'accepted';
           orders[idx]['rawStatus'] = 'en livraison';
         }
-        _testOrders.removeWhere((o) => o['id'] == orderId); // ← always runs
-        final after = _testOrders.length;
-        print('>>> _testOrders: → $after after removing $orderId');
-        print('>>> trying to remove orderId: $orderId');
-        print('>>> _testOrders keys: ${_testOrders.map((o) => o.keys.toList()).toList()}');
-        print('>>> _testOrders ids : ${_testOrders.map((o) => o['id']).toList()}');
       });
 
-
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('✅ Commande acceptée — voir l\'itinéraire sur la carte'),
+        content: Text('✅ Commande acceptée'),
         backgroundColor: Colors.green,
         duration: Duration(seconds: 2),
       ));
 
-      // Recompute route for accepted orders only, then switch to map
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        final providerState =
-        context.findAncestorStateOfType<ProviderHomeScreenState>();
+        final providerState = context.findAncestorStateOfType<ProviderHomeScreenState>();
         if (providerState != null) {
-          final acceptedOrders =
-          orders.where((o) => o['status'] == 'accepted').toList();
-          providerState.previewRouteForOrders(acceptedOrders);
+          providerState.reloadRealRoutes();
           providerState.switchToMapTab();
         }
       });
+
+      // ← DELETE everything after this line until the catch block
     } catch (e) {
       _showError('Erreur réseau: $e');
     } finally {

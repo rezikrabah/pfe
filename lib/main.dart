@@ -10,9 +10,6 @@ import 'package:test2/pages/RoleSelectionScreen.dart';
 import 'package:test2/pages/fournisseurinfos.dart';
 import 'package:test2/pages/splashed_screen.dart';
 
-import 'fournisseur/chauffeur_review_screen.dart';
-import 'fournisseur/provider_home_screen_FINAL.dart';
-
 const String _backendUrl = 'http://10.0.2.2:8000';
  const String baseUrl = 'https://pfe-backend-nwmy.onrender.com';
 // ================================================================
@@ -203,7 +200,6 @@ class MyApp extends StatelessWidget {
             '/forgotpassword': (context) => forgotpassword(),
             '/RoleSelectionScreen': (context) => RoleSelectionScreen(),
             '/fournisseurinfos': (context) => fournisseurinfos(),
-            '/map': (context) => const ProviderHomeScreen(),
           },
         );
       },

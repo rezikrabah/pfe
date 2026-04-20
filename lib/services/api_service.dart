@@ -363,6 +363,31 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> updateWilayas(List<String> wilayas) async {
+    try {
+      final res = await http.put(
+        Uri.parse('$baseUrl/api/fournisseurs/wilayas'),
+        headers: _authHeaders,
+        body: jsonEncode({'wilayas': wilayas}),
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getFournisseurInfo() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$baseUrl/api/users/me'),
+        headers: _authHeaders,
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
   static Future<Map<String, dynamic>> addFournisseurInfo({
     required double quantiteEau,
     required List<String> wilayas,
@@ -498,7 +523,17 @@ class ApiService {
       return [];
     }
   }
-
+  static Future<Map<String, dynamic>> acceptCommande(String commandeId) async {
+    try {
+      final res = await http.put(
+        Uri.parse('$baseUrl/api/commandes/accept/$commandeId'),
+        headers: _authHeaders,
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
   // ─────────────────────────────────────────
   // COMMANDE  →  /api/commandes
   // ─────────────────────────────────────────

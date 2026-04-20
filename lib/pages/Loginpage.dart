@@ -1,13 +1,14 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:test2/pages/createaccpage.dart';
-import '../client/clientpage.dart';
+import '../client/suivi.dart';
 import '../fournisseur/ChauffeurScreen.dart';
 import '../fournisseur/provider_home_screen_FINAL.dart';
 import 'forgotpassword.dart';
 import 'RoleSelectionScreen.dart';
 import '../services/api_service.dart';
 import 'fournisseurinfos.dart';
+import 'admin_dashboard.dart';
 
 class Loginpage extends StatefulWidget {
   const Loginpage({super.key});
@@ -17,27 +18,53 @@ class Loginpage extends StatefulWidget {
 }
 
 class _LoginpageState extends State<Loginpage> {
-  final TextEditingController _emailController    = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
-  bool _isLoading       = false;
+  bool _isLoading = false;
   bool _obscurePassword = true;
 
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
+  // ✅ CREDENTIALS ADMIN EN DUR (pas de backend)
+  static const String _ADMIN_EMAIL = 'adminwaveau@gmail.com';
+  static const String _ADMIN_PASSWORD = 'water2025@';
 
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
     setState(() => _isLoading = true);
 
+    // ✅ ÉTAPE 1 : VÉRIFICATION ADMIN LOCAL (pas d'appel API)
+    if (email == _ADMIN_EMAIL && password == _ADMIN_PASSWORD) {
+      // Simuler un délai pour l'effet visuel
+      await Future.delayed(const Duration(milliseconds: 800));
+
+      if (!mounted) return;
+
+      setState(() => _isLoading = false);
+
+      // Navigation directe vers l'interface admin
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const AdminApp()),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bienvenue Administrateur'),
+          backgroundColor: Colors.purple,
+        ),
+      );
+      return; // ← STOP ICI, pas d'appel backend
+    }
+
+    // ✅ ÉTAPE 2 : LOGIN NORMAL (appel API pour les autres utilisateurs)
     final result = await ApiService.login(
-      email:    _emailController.text.trim(),
-      password: _passwordController.text.trim(),
+      email: email,
+      password: password,
     );
 
     setState(() => _isLoading = false);
@@ -59,9 +86,10 @@ class _LoginpageState extends State<Loginpage> {
 
       final String? role = result['user']?['role'];
 
+      // Redirections normales (sans admin)
       if (role == 'client') {
         Navigator.pushReplacement(context,
-            MaterialPageRoute(builder: (_) => clientpage()));
+            MaterialPageRoute(builder: (_) => suivi()));
       } else if (role == 'chauffeur') {
         Navigator.pushReplacement(context,
             MaterialPageRoute(builder: (_) => ProviderHomeScreen()));
@@ -75,7 +103,7 @@ class _LoginpageState extends State<Loginpage> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['msg'] ?? 'Login failed'),
+          content: Text(result['msg'] ?? 'La connexion a échoué'),
           backgroundColor: Colors.red,
         ),
       );
@@ -84,7 +112,8 @@ class _LoginpageState extends State<Loginpage> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth  = MediaQuery.of(context).size.width;
+    // ... reste du build identique ...
+    final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
@@ -92,7 +121,7 @@ class _LoginpageState extends State<Loginpage> {
       appBar: AppBar(
         iconTheme: const IconThemeData(color: Colors.white),
         title: Text(
-          'LOG IN',
+          'SE CONNECTER',
           style: TextStyle(
             color: const Color(0xFFEAFBFF),
             fontSize: screenWidth * 0.033,
@@ -106,8 +135,7 @@ class _LoginpageState extends State<Loginpage> {
           Padding(
             padding: EdgeInsets.only(right: screenWidth * 0.03),
             child: Icon(Icons.water_drop,
-                size: screenWidth * 0.065,
-                color: const Color(0xFF1E88E5)),
+                size: screenWidth * 0.065, color: const Color(0xFF1E88E5)),
           ),
         ],
       ),
@@ -115,8 +143,7 @@ class _LoginpageState extends State<Loginpage> {
         key: _formKey,
         child: Stack(
           children: [
-
-            // ── Background image ──────────────────────────
+            // Background image
             Positioned.fill(
               child: CachedNetworkImage(
                 imageUrl:
@@ -126,8 +153,7 @@ class _LoginpageState extends State<Loginpage> {
                 errorWidget: (_, __, ___) => const SizedBox.shrink(),
               ),
             ),
-
-            // ── Gradient overlay ──────────────────────────
+            // Gradient overlay
             Positioned.fill(
               child: Container(
                 decoration: const BoxDecoration(
@@ -144,17 +170,14 @@ class _LoginpageState extends State<Loginpage> {
                 ),
               ),
             ),
-
-            // ── Content ───────────────────────────────────
+            // Content
             SafeArea(
               child: SingleChildScrollView(
                 padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.07),
                 child: Column(
                   children: [
-
                     SizedBox(height: screenHeight * 0.04),
-
-                    // ── Logo ────────────────────────────────
+                    // Logo
                     Container(
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
@@ -171,37 +194,32 @@ class _LoginpageState extends State<Loginpage> {
                         backgroundImage: const AssetImage('assets/app.png'),
                       ),
                     ),
-
                     SizedBox(height: screenHeight * 0.02),
-
-                    // ── Title ────────────────────────────────
+                    // Title
                     Text(
-                      'Welcome back',
+                      'Content de vous revoir',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: screenWidth * 0.06,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-
                     SizedBox(height: screenHeight * 0.005),
-
                     Text(
-                      'Add your details to log in',
+                      'Ajoutez vos coordonnées pour vous connecter',
                       style: TextStyle(
                         color: const Color(0xFFB8E3F0),
                         fontSize: screenWidth * 0.033,
                         fontWeight: FontWeight.w400,
                       ),
                     ),
-
                     SizedBox(height: screenHeight * 0.035),
-
-                    // ── Email field ──────────────────────────
+                    // Email field
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
-                      style: TextStyle(color: Colors.white, fontSize: screenWidth * 0.035),
+                      style: TextStyle(
+                          color: Colors.white, fontSize: screenWidth * 0.035),
                       decoration: _inputDecoration(
                         label: 'Email',
                         hint: 'john@example.com',
@@ -210,21 +228,20 @@ class _LoginpageState extends State<Loginpage> {
                         screenHeight: screenHeight,
                       ),
                       validator: (v) {
-                        if (v!.isEmpty) return 'Please enter your email';
-                        if (!v.contains('@')) return 'Enter a valid email';
+                        if (v!.isEmpty) return 'Veuillez entrer votre email';
+                        if (!v.contains('@')) return 'Entrez un email valide';
                         return null;
                       },
                     ),
-
                     SizedBox(height: screenHeight * 0.018),
-
-                    // ── Password field ───────────────────────
+                    // Password field
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
-                      style: TextStyle(color: Colors.white, fontSize: screenWidth * 0.035),
+                      style: TextStyle(
+                          color: Colors.white, fontSize: screenWidth * 0.035),
                       decoration: _inputDecoration(
-                        label: 'Password',
+                        label: 'Mot de passe',
                         hint: '••••••••',
                         icon: Icons.lock_outline,
                         screenWidth: screenWidth,
@@ -242,13 +259,12 @@ class _LoginpageState extends State<Loginpage> {
                         ),
                       ),
                       validator: (v) {
-                        if (v!.isEmpty) return 'Please enter your password';
-                        if (v.length < 6) return 'At least 6 characters';
+                        if (v!.isEmpty) return 'Veuillez entrer votre mot de passe';
+                        if (v.length < 8) return 'Au moins 8 caractères';
                         return null;
                       },
                     ),
-
-                    // ── Forgot password ──────────────────────
+                    // Forgot password
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
@@ -261,7 +277,7 @@ class _LoginpageState extends State<Loginpage> {
                           ),
                         ),
                         child: Text(
-                          'Forgot password?',
+                          'Mot de passe oublié?',
                           style: TextStyle(
                             color: const Color(0xFF00C8F0),
                             fontSize: screenWidth * 0.03,
@@ -270,10 +286,8 @@ class _LoginpageState extends State<Loginpage> {
                         ),
                       ),
                     ),
-
                     SizedBox(height: screenHeight * 0.01),
-
-                    // ── Login button ─────────────────────────
+                    // Login button
                     SizedBox(
                       width: double.infinity,
                       height: screenHeight * 0.065,
@@ -299,7 +313,7 @@ class _LoginpageState extends State<Loginpage> {
                           ),
                         )
                             : Text(
-                          'Log in',
+                          'Se connecter',
                           style: TextStyle(
                             fontSize: screenWidth * 0.04,
                             fontWeight: FontWeight.w600,
@@ -308,15 +322,13 @@ class _LoginpageState extends State<Loginpage> {
                         ),
                       ),
                     ),
-
                     SizedBox(height: screenHeight * 0.03),
-
-                    // ── Sign up link ─────────────────────────
+                    // Sign up link
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          "Don't have an account? ",
+                          "j'ai pas de compte? ",
                           style: TextStyle(
                             color: const Color(0xFF9EC7CF),
                             fontSize: screenWidth * 0.033,
@@ -326,7 +338,7 @@ class _LoginpageState extends State<Loginpage> {
                           onTap: () => Navigator.push(context,
                               MaterialPageRoute(builder: (_) => createaccpage())),
                           child: Text(
-                            'Sign up',
+                            'S\'inscrire',
                             style: TextStyle(
                               color: const Color(0xFF00C8F0),
                               fontSize: screenWidth * 0.033,
@@ -336,7 +348,6 @@ class _LoginpageState extends State<Loginpage> {
                         ),
                       ],
                     ),
-
                     SizedBox(height: screenHeight * 0.04),
                   ],
                 ),
@@ -348,7 +359,6 @@ class _LoginpageState extends State<Loginpage> {
     );
   }
 
-  // ── Input decoration helper ───────────────────────────────
   InputDecoration _inputDecoration({
     required String label,
     required String hint,
@@ -369,7 +379,8 @@ class _LoginpageState extends State<Loginpage> {
         fontSize: screenWidth * 0.03,
         color: Colors.white.withOpacity(0.25),
       ),
-      prefixIcon: Icon(icon, color: const Color(0xFF00C8F0), size: screenWidth * 0.05),
+      prefixIcon:
+      Icon(icon, color: const Color(0xFF00C8F0), size: screenWidth * 0.05),
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: Colors.white.withOpacity(0.06),

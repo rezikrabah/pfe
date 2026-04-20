@@ -1,10 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:test2/client/clientpage.dart';
+import 'package:test2/client/suivi.dart';
 import 'package:test2/pages/fournisseurinfos.dart';
 import '../services/api_service.dart';
 import 'package:test2/fournisseur/ChauffeurScreen.dart';
+
 
 class RoleSelectionScreen extends StatefulWidget {
   final String? userId;
@@ -57,7 +58,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) {
-        if (role == 'client') return clientpage();
+        if (role == 'client') return suivi();
         if (role == 'gerant') return const ChauffeurScreen();
         return const fournisseurinfos();
       }),

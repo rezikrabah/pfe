@@ -7,7 +7,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
-import 'clientpage.dart';
 import 'commandes.dart';
 import 'historique.dart';
 import 'profile.dart';
@@ -136,7 +135,8 @@ class _suiviState extends State<suivi> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                    color: color, borderRadius: BorderRadius.circular(8)),
+                    color: color, borderRadius: BorderRadius.circular(8
+                )),
                 child: Text('${i + 1}',
                     style: const TextStyle(color: Colors.white,
                         fontSize: 10, fontWeight: FontWeight.bold)),
@@ -295,10 +295,68 @@ class _suiviState extends State<suivi> {
             ],
           ),
 
+          // ── Bouton "Faire une commande" ───────────────────────
+          Positioned(
+            top: screenHeight * 0.66,
+            right: screenWidth *  0.1 ,
+            left:  screenWidth *  0.05 ,
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => commandes(
+                      clientId: int.tryParse(ApiService.userId ?? '1') ?? 1,
+                    ),
+                  ),
+                );
+              },
+              child: Container(
+                height: screenHeight * 0.11,
+                padding: EdgeInsets.symmetric(
+                  horizontal: screenWidth * 0.05,
+                  vertical: screenHeight * 0.018,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B3C49),
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 8,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.add_shopping_cart,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                    SizedBox(width: screenWidth * 0.02),
+                    const Text(
+                      'Faire une commande',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
           // ── Loading ──────────────────────────────────────
           if (_loadingRoutes)
             Positioned(
-              top: screenHeight * 0.07, left: 0, right: 0,
+              top: screenHeight * 0.14,
+              left: 0,
+              right: 0,
               child: Center(
                 child: Container(
                   padding: EdgeInsets.symmetric(
@@ -323,7 +381,7 @@ class _suiviState extends State<suivi> {
           // ── Error ────────────────────────────────────────
           if (_routeError != null && !_loadingRoutes)
             Positioned(
-              top: screenHeight * 0.07,
+              top: screenHeight * 0.14,
               left: screenWidth * 0.04,
               right: screenWidth * 0.04,
               child: Container(
@@ -347,7 +405,7 @@ class _suiviState extends State<suivi> {
           // ── Distance badge ────────────────────────────────
           if (_totalDistance != null)
             Positioned(
-              top: screenHeight * 0.07,
+              top: screenHeight * 0.14,
               left: screenWidth * 0.04,
               child: Container(
                 padding: EdgeInsets.symmetric(
@@ -369,7 +427,7 @@ class _suiviState extends State<suivi> {
 
           // ── My location FAB ───────────────────────────────
           Positioned(
-            bottom: screenHeight * 0.13,
+            bottom: screenHeight * 0.6,
             right: screenWidth * 0.04,
             child: FloatingActionButton.small(
               heroTag: 'location',
@@ -381,7 +439,7 @@ class _suiviState extends State<suivi> {
 
           // ── Refresh FAB ───────────────────────────────────
           Positioned(
-            bottom: screenHeight * 0.19,
+            bottom: screenHeight * 0.51,
             right: screenWidth * 0.04,
             child: FloatingActionButton.small(
               heroTag: 'refresh',
@@ -393,41 +451,35 @@ class _suiviState extends State<suivi> {
         ],
       ),
 
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF0B3C49),
-        shape: const CircleBorder(),
-        child: const Icon(CupertinoIcons.home, color: Colors.white),
-        onPressed: () => Navigator.push(context,
-            MaterialPageRoute(builder: (_) => clientpage())),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
       bottomNavigationBar: BottomAppBar(
         notchMargin: 8,
-        height: screenHeight * 0.1,
         color: const Color(0xFF0B3C49),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _navItem(CupertinoIcons.map, 'suivi', () {}, active: true),
-            SizedBox(width: screenWidth * 0.08),
-            _navItem(CupertinoIcons.cube_box_fill, 'commandes', () =>
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => commandes(
-                    clientId: int.tryParse(ApiService.userId ?? '1') ?? 1,
-                  ),
-                )),
-            ),
-            SizedBox(width: screenWidth * 0.06),
-            _navItem(CupertinoIcons.clock, 'historique', () =>
-                Navigator.push(context, MaterialPageRoute(builder: (_) => historique())),
-            ),
-            SizedBox(width: screenWidth * 0.05),
-            _navItem(CupertinoIcons.profile_circled, 'profile', () =>
-                Navigator.push(context, MaterialPageRoute(builder: (_) => profile())),
-            ),
-          ],
+        padding: EdgeInsets.zero,   // supprime le padding interne par défaut
+        child: SizedBox(
+          height: 60,               // hauteur fixe et fiable
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _navItem(CupertinoIcons.map, 'suivi', () {}, active: true),
+              _navItem(CupertinoIcons.cube_box_fill, 'commandes', () =>
+                  Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => commandes(
+                      clientId: int.tryParse(ApiService.userId ?? '1') ?? 1,
+                    ),
+                  )),
+              ),
+              _navItem(CupertinoIcons.clock, 'historique', () =>
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => historique())),
+              ),
+              _navItem(CupertinoIcons.profile_circled, 'profile', () =>
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => profile())),
+              ),
+            ],
+          ),
         ),
+
+
       ),
     );
   }
