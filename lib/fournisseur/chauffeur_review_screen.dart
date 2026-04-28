@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:test2/fournisseur/provider_home_screen_FINAL.dart';
 
+import '../services/api_service.dart';
+
 class ChauffeurReviewScreen extends StatefulWidget {
   final String commandeId;
   final String clientNom;
@@ -13,7 +15,7 @@ class ChauffeurReviewScreen extends StatefulWidget {
     required this.commandeId,
     required this.clientNom,
     required this.volumeLivre,
-    required this.adresse,
+    required this.adresse,  required String driverPhone,
   }) : super(key: key);
 
   @override
@@ -71,21 +73,40 @@ class _ChauffeurReviewScreenState extends State<ChauffeurReviewScreen>
 
   Future<void> _submit() async {
     if (_clientRating == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Veuillez évaluer le client'),
-          backgroundColor: const Color(0xFF1E3A8A),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Veuillez évaluer le client'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
       return;
     }
     HapticFeedback.mediumImpact();
     setState(() => _submitting = true);
-    await Future.delayed(const Duration(milliseconds: 1200));
+
+    final result = await ApiService.submitChauffeurReview(
+      commandeId:    widget.commandeId,
+      note:          _clientRating,
+      issues:        _selectedIssues.toList(),
+      positives:     _selectedPositives.toList(),
+      accessFacile:  _accessFacile,
+      clientPresent: _clientPresent,
+    );
+
     if (!mounted) return;
-    setState(() { _submitting = false; _submitted = true; });
+    setState(() => _submitting = false);
+
+    if (result['error'] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(result['error']),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
+      return;
+    }
+
+    setState(() => _submitted = true);
     _successCtrl.forward();
   }
 

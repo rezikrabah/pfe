@@ -7,12 +7,14 @@ import 'package:http/http.dart' as http;
 import '../fournisseur/chauffeur_review_screen.dart';
 import '../services/api_service.dart';
 import '../services/osrmservice.dart';
+import 'client_review_screen.dart';
 
 class ClientTrackingPage extends StatefulWidget {
   final String commandeId;
   final String clientId;
   final String? chauffeurId;
   final String clientNom;
+  final String driverPhone;
   final double volumeLivre;
   final String adresse;
 
@@ -20,6 +22,7 @@ class ClientTrackingPage extends StatefulWidget {
     super.key,
     required this.commandeId,
     required this.clientId,
+    required this.driverPhone,
     required this.clientNom,
     required this.volumeLivre,
     required this.adresse,
@@ -39,12 +42,13 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   LatLng?      _driverPos;
   LatLng?      _destination;
   List<LatLng> _routePoints = [];
-
+  bool _deliveryDialogShown = false;
   double?   _distanceKm;
   double?   _durationMin;
   String?   _driverName;
   String?   _driverPhone;
   String?   _chauffeurId;
+  double? _driverRating;
   DateTime? _lastDriverUpdate;
   bool      _loading = true;
   String?   _error;
@@ -59,19 +63,18 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   // Only auto-fit map bounds on first driver position
   bool _hasAutoFitted = false;
 
-  // ── FIX 2 & 3: Threshold only gates OSRM re-route, NOT marker update.
-  // Raised to 50 m so OSRM is called less often, but the marker itself
-  // always moves on every poll (see _applyTrackingData).
   static const double _rerouteThresholdMeters = 50.0;
 
   // ── FIX: Poll every 3 s so simulation movement (uploaded every ~1 s)
   // is visible to the client without noticeable lag.
-  static const Duration _pollInterval = Duration(seconds: 3);
+  static const Duration _pollInterval = Duration(seconds: 8);
+  int _errorCount = 0;
 
   @override
   void initState() {
     super.initState();
     _chauffeurId = widget.chauffeurId;
+    _driverPhone = widget.driverPhone;
     _fetchTracking();
     _timer = Timer.periodic(_pollInterval, (_) => _fetchTracking());
   }
@@ -82,7 +85,11 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     _mapController.dispose();
     super.dispose();
   }
-
+  Map<String, dynamic> _map(dynamic d) => {
+    'phone':     d['telephone'] ?? '',
+    'deliveries':d['totalLivraisons'] ?? 0,
+    'rating':    (d['noteMoyenne'] ?? 0.0).toDouble(),
+  };
   Future<void> _fetchTracking() async {
     if (_isFetching) return;
     _isFetching = true;
@@ -90,14 +97,20 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     try {
       final res = await http
           .get(
-        Uri.parse(
-            '${ApiService.baseUrl}/api/commandes/${widget.commandeId}/track'),
+        Uri.parse('${ApiService.baseUrl}/api/commandes/${widget.commandeId}/track'),
         headers: {
           'Content-Type':  'application/json',
           'Authorization': 'Bearer ${ApiService.token}',
         },
       )
           .timeout(const Duration(seconds: 8));
+
+      // ── Handle 429 — back off and retry later
+      if (res.statusCode == 429) {
+        _errorCount++;
+        _scheduleBackoff();
+        return;
+      }
 
       if (res.statusCode == 404) {
         await _fetchCommandeStatus();
@@ -114,19 +127,39 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
         return;
       }
 
+      // Success — reset error count
+      _errorCount = 0;
       final data = jsonDecode(res.body);
       await _applyTrackingData(data);
+
     } on TimeoutException {
-      if (mounted) {
-        setState(() => _error = 'Délai dépassé, nouvelle tentative...');
-      }
+      _errorCount++;
+      _scheduleBackoff();
+      if (mounted) setState(() => _error = 'Délai dépassé, nouvelle tentative...');
     } catch (e) {
+      _errorCount++;
       await _fetchCommandeStatus();
     } finally {
       _isFetching = false;
     }
   }
 
+
+
+  void _scheduleBackoff() {
+    _timer?.cancel();
+    final backoff = Duration(
+      seconds: (_pollInterval.inSeconds * (1 << _errorCount.clamp(0, 3))).clamp(8, 60),
+    );
+    if (mounted) setState(() => _error = 'Trop de requêtes, reprise dans ${backoff.inSeconds}s...');
+    _timer = Timer(backoff, () {
+      if (!mounted) return;
+      _errorCount = 0;      // ← reset error count so backoff resets
+      _fetchTracking();
+      _timer?.cancel();     // ← cancel the one-shot before creating periodic
+      _timer = Timer.periodic(_pollInterval, (_) => _fetchTracking());
+    });
+  }
   Future<void> _fetchCommandeStatus() async {
     try {
       final commandes = await ApiService.getMyCommandes();
@@ -138,6 +171,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       if (!mounted) return;
 
       if (commande.isNotEmpty) {
+        final raw = commande['status'] ?? commande['statut'] ?? 'en attente';
+        debugPrint('[CLIENT] fetchCommandeStatus raw: "$raw"');
         final normalized = _normalizeStatus(
             commande['status'] ?? commande['statut'] ?? 'en attente');
         setState(() {
@@ -147,7 +182,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
         });
         if (normalized == 'refusee' || normalized == 'livree') {
           _timer?.cancel();
-          if (normalized == 'livree') _navigateToRating();
+          if (normalized == 'livree') _showDeliveryConfirmDialog();
         }
       } else {
         setState(() {
@@ -176,7 +211,10 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
   Future<void> _applyTrackingData(Map<String, dynamic> data) async {
     final rawStatus = (data['statut'] ?? data['status'] ?? 'en attente').toString();
     final statut    = _normalizeStatus(rawStatus);
-
+    debugPrint('[CLIENT] raw status from server: "$rawStatus"');
+    debugPrint('[CLIENT] normalized status: "$statut"');
+    debugPrint('[CLIENT] full data: $data');
+    debugPrint('[FOURNISSEUR] raw object: ${data['fournisseur']}');
     // ── Parse driver position ─────────────────────────────────
     LatLng? driverPos;
     if (data['driver_lat'] != null && data['driver_lon'] != null) {
@@ -237,39 +275,46 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     final fournisseur = data['fournisseur'];
 
     if (chauffeur != null && chauffeur['nom'] != null) {
-      driverName   = chauffeur['nom'];
-      driverPhone  = chauffeur['telephone'];
-      _chauffeurId = (chauffeur['_id'] ?? chauffeur['id'])?.toString();
+      driverName    = chauffeur['nom'];
+      driverPhone   = chauffeur['telephone'] ?? chauffeur['phone'] ?? widget.driverPhone;
+      _chauffeurId  = (chauffeur['_id'] ?? chauffeur['id'])?.toString();
+      _driverRating = (chauffeur['noteMoyenne'] ?? 0.0).toDouble(); // ← add this
     } else if (fournisseur != null) {
       driverName =
           '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'.trim();
       if (driverName!.isEmpty) driverName = null;
-      _chauffeurId ??=
-          (fournisseur['_id'] ?? fournisseur['id'])?.toString();
+      _chauffeurId  ??= (fournisseur['_id'] ?? fournisseur['id'])?.toString();
+      driverPhone     = fournisseur['telephone']?.toString();         // ← add
+      _driverRating   = (fournisseur['noteMoyenne'] ?? 0.0).toDouble(); // ← add
     }
 
     if (!mounted) return;
 
     // ── FIX 3: Always update _driverPos so marker redraws every poll ──
     setState(() {
-      _error       = null;
-      _loading     = false;
-      _statut      = statut;
-      _driverPos   = driverPos;   // ← always set, not gated by threshold
-      _destination = destination;
-      _routePoints = routePoints;
-      _distanceKm  = distanceKm;
-      _durationMin = durationMin;
-      _driverName  = driverName;
-      _driverPhone = driverPhone;
+      _error        = null;
+      _loading      = false;
+      _statut       = statut;
+      _driverPos    = driverPos;
+      _destination  = destination;
+      _routePoints  = routePoints;
+      _distanceKm   = distanceKm;
+      _durationMin  = durationMin;
+      _driverName   = driverName;
+      _driverPhone  = driverPhone;
+      _driverRating = _driverRating;
     });
 
-    if (statut == 'refusee' || statut == 'livree') {
+    debugPrint('[CHAUFFEUR] name=$driverName phone=$driverPhone rating=$_driverRating');
+    debugPrint('[CHAUFFEUR] raw object: $chauffeur');
+    if (statut == 'livree' || statut == 'refusee') {
       _timer?.cancel();
-      if (statut == 'livree') _navigateToRating();
+      if (statut == 'livree' && !_deliveryDialogShown) {
+        _deliveryDialogShown = true;
+        _showDeliveryConfirmDialog();
+      }
       return;
     }
-
     // Auto-fit bounds only on the very first update
     if (!_hasAutoFitted) {
       _hasAutoFitted = true;
@@ -307,67 +352,62 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
     return [driverPos, ...points.sublist(closestIdx)];
   }
 
-  void _navigateToRating() {
-    if (_ratingNavigated || !mounted) return;
-    _ratingNavigated = true;
-
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-          title: const Row(children: [
-            Icon(Icons.check_circle, color: Colors.green, size: 32),
-            SizedBox(width: 12),
-            Text('Livraison effectuée !',
-                style: TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.bold)),
-          ]),
-          content: const Text(
-            'Votre commande a été livrée avec succès.\n'
-                'Voulez-vous évaluer le livreur ?',
-            style: TextStyle(fontSize: 14),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                Navigator.pop(context);
-              },
-              child: const Text('Plus tard',
-                  style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.pop(ctx);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ChauffeurReviewScreen(
-                      commandeId:  widget.commandeId,
-                      clientNom:   widget.clientNom,
-                      volumeLivre: widget.volumeLivre,
-                      adresse:     widget.adresse,
-                    ),
-                  ),
-                );
-              },
-              icon:  const Icon(Icons.star),
-              label: const Text('Évaluer'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0B3C49),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ],
+  void _showDeliveryConfirmDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(children: [
+          Icon(Icons.local_shipping, color: Color(0xFF0B3C49), size: 28),
+          SizedBox(width: 10),
+          Text('Confirmer la livraison',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        ]),
+        content: const Text(
+          'Avez-vous bien reçu votre commande ?',
+          style: TextStyle(fontSize: 14),
         ),
-      );
-    });
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              // Not received yet — resume polling
+              _timer = Timer.periodic(_pollInterval, (_) => _fetchTracking());
+            },
+            child: const Text('Non, pas encore',
+                style: TextStyle(color: Colors.grey)),
+          ),
+    ElevatedButton.icon(
+    onPressed: () async {
+    Navigator.pop(ctx, true); // close dialog first
+    await Future.delayed(const Duration(milliseconds: 100));
+    if (mounted) {
+    // ← await the review screen so simulation resumes AFTER returning
+    await Navigator.push(context, MaterialPageRoute(
+    builder: (_) => ClientReviewScreen(
+    commandeId:   widget.commandeId,
+    chauffeurNom: _driverName ?? 'Livreur',
+    volumeLivre:  widget.volumeLivre,
+    prixFinal:    0.0, // replace with actual price if available
+    ),
+    ));
+    }
+    },
+    icon:  const Icon(Icons.check_circle_outline),
+    label: const Text('Confirmer la livraison'),
+    style: ElevatedButton.styleFrom(
+    backgroundColor: Colors.green,
+    foregroundColor: Colors.white,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    ),
+    ),
+        ],
+
+      ),
+    );
   }
 
   String _normalizeStatus(String status) {
@@ -475,6 +515,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                       builder: (_) => ChauffeurReviewScreen(
                         commandeId:  widget.commandeId,
                         clientNom:   widget.clientNom,
+                        driverPhone:   widget.driverPhone,
                         volumeLivre: widget.volumeLivre,
                         adresse:     widget.adresse,
                       ),
@@ -511,6 +552,9 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       ),
     );
   }
+
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -657,46 +701,76 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                     ]),
 
                     if (_driverName != null) ...[
-                      SizedBox(
-                          height: screenHeight * 0.015),
+                      SizedBox(height: screenHeight * 0.015),
                       Row(children: [
+                        // ── Avatar ──────────────────────────────────
                         CircleAvatar(
-                          backgroundColor:
-                          Colors.grey.shade200,
+                          backgroundColor: Colors.green.shade100,
                           radius: screenWidth * 0.045,
-                          child: Icon(Icons.person,
-                              color: Colors.grey,
+                          child: Icon(Icons.local_shipping,
+                              color: Colors.green.shade700,
                               size:  screenWidth * 0.05),
                         ),
-                        SizedBox(
-                            width: screenWidth * 0.03),
+                        SizedBox(width: screenWidth * 0.03),
+
+                        // ── Name + Phone + Rating ────────────────────
                         Expanded(
                           child: Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              // Name
                               Text(
                                 _driverName!,
                                 style: TextStyle(
-                                  fontWeight:
-                                  FontWeight.w600,
-                                  fontSize:
-                                  screenWidth * 0.035,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize:   screenWidth * 0.035,
                                 ),
                               ),
+                              SizedBox(height: screenHeight * 0.004),
+
+                              // Phone
                               if (_driverPhone != null)
-                                Text(
-                                  _driverPhone!,
-                                  style: TextStyle(
-                                    color: Colors
-                                        .grey.shade600,
-                                    fontSize:
-                                    screenWidth * 0.03,
+                                Row(children: [
+                                  Icon(Icons.phone_outlined,
+                                      size:  screenWidth * 0.03,
+                                      color: Colors.grey.shade500),
+                                  SizedBox(width: screenWidth * 0.01),
+                                  Text(
+                                    _driverPhone!,
+                                    style: TextStyle(
+                                      color:    Colors.grey.shade600,
+                                      fontSize: screenWidth * 0.03,
+                                    ),
                                   ),
-                                ),
+                                ]),
+
+                              SizedBox(height: screenHeight * 0.004),
+
+                              // Rating stars
+                              if (_driverRating != null)
+                                Row(children: [
+                                  ...List.generate(5, (i) => Icon(
+                                    i < _driverRating!.round()
+                                        ? Icons.star
+                                        : Icons.star_border,
+                                    size:  screenWidth * 0.035,
+                                    color: Colors.amber,
+                                  )),
+                                  SizedBox(width: screenWidth * 0.015),
+                                  Text(
+                                    _driverRating!.toStringAsFixed(1),
+                                    style: TextStyle(
+                                      fontSize:   screenWidth * 0.03,
+                                      fontWeight: FontWeight.bold,
+                                      color:      Colors.amber.shade700,
+                                    ),
+                                  ),
+                                ]),
                             ],
                           ),
                         ),
+
+                        // ── Call button ──────────────────────────────
                         if (_driverPhone != null)
                           IconButton(
                             icon: Icon(Icons.phone,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/api_service.dart';
+
 class ClientReviewScreen extends StatefulWidget {
   final String commandeId;
   final String chauffeurNom;
@@ -68,21 +70,38 @@ class _ClientReviewScreenState extends State<ClientReviewScreen>
 
   Future<void> _submit() async {
     if (_starRating == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Veuillez donner une note'),
-          backgroundColor: const Color(0xFF1E3A8A),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Veuillez donner une note'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
       return;
     }
     HapticFeedback.mediumImpact();
     setState(() => _submitting = true);
-    await Future.delayed(const Duration(milliseconds: 1200));
+
+    final result = await ApiService.submitClientReview(
+      commandeId:  widget.commandeId,
+      note:        _starRating,
+      tags:        _selectedTags.toList(),
+      commentaire: _commentController.text.trim(),
+    );
+
     if (!mounted) return;
-    setState(() { _submitting = false; _submitted = true; });
+    setState(() => _submitting = false);
+
+    if (result['error'] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(result['error']),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
+      return;
+    }
+
+    setState(() => _submitted = true);
     _successController.forward();
   }
 

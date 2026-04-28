@@ -276,6 +276,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         title: const Text('Profil'),
         backgroundColor: const Color(0xFF1E3A8A),
+        automaticallyImplyLeading: false,
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
@@ -595,7 +596,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               icon: Icons.local_shipping_outlined,
               title: 'Mes camions',
               onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const MyCamionsScreen()))),
+                  MaterialPageRoute(builder: (_) => MyCamionsScreen(token: ApiService.token ?? '')))),
           _buildDivider(),
 
           _buildMenuItem(
@@ -1097,51 +1098,144 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   }
 }
 
+
+
+
 // ============================================================
-// 2. MES CAMIONS
+// CAMION MODEL
+// ============================================================
+class Camion {
+  final String id;
+  final String name;
+  final String plate;
+  final int capacity;
+  final String status;
+  final String model;
+  final String year;
+  final String lastService;
+  final String nextService;
+
+  Camion({
+    required this.id,
+    required this.name,
+    required this.plate,
+    required this.capacity,
+    required this.status,
+    required this.model,
+    required this.year,
+    required this.lastService,
+    required this.nextService,
+  });
+
+  factory Camion.fromJson(Map<String, dynamic> json) => Camion(
+    id: json['_id'] ?? json['id'] ?? '',
+    name: json['name'] ?? '',
+    plate: json['plate'] ?? '',
+    capacity: (json['capacity'] ?? 0) is int
+        ? json['capacity']
+        : int.tryParse(json['capacity'].toString()) ?? 0,
+    status: json['status'] ?? 'Actif',
+    model: json['model'] ?? '',
+    year: json['year'] ?? '',
+    lastService: json['lastService'] ?? '',
+    nextService: json['nextService'] ?? '',
+  );
+}
+
+// ============================================================
+// MES CAMIONS SCREEN
 // ============================================================
 class MyCamionsScreen extends StatefulWidget {
-  const MyCamionsScreen({Key? key}) : super(key: key);
+  final String token;
+
+  const MyCamionsScreen({Key? key, required this.token}) : super(key: key);
 
   @override
   State<MyCamionsScreen> createState() => _MyCamionsScreenState();
 }
 
 class _MyCamionsScreenState extends State<MyCamionsScreen> {
-  final List<Map<String, dynamic>> trucks = [
-    {
-      'id': '1',
-      'name': 'Camion 1',
-      'plate': '16-001-231',
-      'capacity': 5400,
-      'status': 'Actif',
-      'model': 'Mercedes Actros',
-      'year': '2021',
-      'lastService': '15/01/2025',
-      'nextService': '15/07/2025',
-    },
-    {
-      'id': '2',
-      'name': 'Camion 2',
-      'plate': '16-002-418',
-      'capacity': 5400,
-      'status': 'En maintenance',
-      'model': 'MAN TGS',
-      'year': '2019',
-      'lastService': '10/02/2025',
-      'nextService': '10/08/2025',
-    },
-  ];
+  List<Camion> trucks = [];
+  bool isLoading = true;
+  String? error;
 
-  void _showAddTruckDialog() {
+  @override
+  void initState() {
+    super.initState();
+    _loadTrucks();
+  }
+
+  Future<void> _loadTrucks() async {
+    setState(() {
+      isLoading = true;
+      error = null;
+    });
+
+    final data = await ApiService.getMyCamions();
+    if (!mounted) return;
+
+    setState(() {
+      isLoading = false;
+      trucks = data.map((e) => Camion.fromJson(e)).toList();
+    });
+  }
+
+  void _showAddTruckDialog({Camion? existing}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (context) => const AddTruckBottomSheet(),
+      builder: (context) => AddTruckBottomSheet(
+        token: widget.token,
+        existing: existing,
+        onAdded: _loadTrucks, // refresh list after add/edit
+      ),
     );
+  }
+
+  Future<void> _confirmDelete(Camion truck) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Supprimer le camion'),
+        content: Text('Voulez-vous vraiment supprimer "${truck.name}" ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final res = await ApiService.deleteCamion(truck.id);
+    if (!mounted) return;
+
+    if (res['error'] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur: ${res['error']}')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Camion supprimé avec succès')),
+      );
+      _loadTrucks();
+    }
   }
 
   @override
@@ -1155,51 +1249,90 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
         elevation: 0,
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddTruckDialog,
+        onPressed: () => _showAddTruckDialog(),
         backgroundColor: const Color(0xFF1E3A8A),
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
         label: const Text('Ajouter un camion'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF1E3A8A)))
+          : error != null
+          ? Center(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Résumé
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+            const Icon(Icons.error_outline, color: Colors.red, size: 48),
+            const SizedBox(height: 12),
+            Text(error!, style: const TextStyle(color: Colors.red)),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _loadTrucks,
+              child: const Text('Réessayer'),
+            ),
+          ],
+        ),
+      )
+          : RefreshIndicator(
+        onRefresh: _loadTrucks,
+        color: const Color(0xFF1E3A8A),
+        child: trucks.isEmpty
+            ? ListView(
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.3),
+            const Center(
+              child: Column(
                 children: [
-                  _buildSummaryItem('${trucks.length}', 'Camions', Icons.local_shipping),
-                  _buildSummaryItem(
-                    '${trucks.where((t) => t['status'] == 'Actif').length}',
-                    'Actifs',
-                    Icons.check_circle_outline,
-                  ),
-                  _buildSummaryItem(
-                    '${trucks.fold(0, (sum, t) => sum + (t['capacity'] as int))} L',
-                    'Capacité totale',
-                    Icons.water_drop_outlined,
-                  ),
+                  Icon(Icons.local_shipping_outlined,
+                      size: 64, color: Colors.grey),
+                  SizedBox(height: 16),
+                  Text('Aucun camion enregistré',
+                      style: TextStyle(
+                          fontSize: 16, color: Colors.grey)),
                 ],
               ),
             ),
-
-            const SizedBox(height: 20),
-
-            // Liste des camions
-            ...trucks.map((truck) => _buildTruckCard(truck)).toList(),
           ],
+        )
+            : SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              _buildSummaryCard(),
+              const SizedBox(height: 20),
+              ...trucks
+                  .map((truck) => _buildTruckCard(truck))
+                  .toList(),
+              const SizedBox(height: 80), // FAB clearance
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSummaryCard() {
+    final totalCapacity = trucks.fold(0, (sum, t) => sum + t.capacity);
+    final activeCount = trucks.where((t) => t.status == 'Actif').length;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildSummaryItem('${trucks.length}', 'Camions', Icons.local_shipping),
+          _buildSummaryItem('$activeCount', 'Actifs', Icons.check_circle_outline),
+          _buildSummaryItem('$totalCapacity L', 'Capacité totale', Icons.water_drop_outlined),
+        ],
       ),
     );
   }
@@ -1209,17 +1342,16 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
       children: [
         Icon(icon, color: Colors.white70, size: 24),
         const SizedBox(height: 8),
-        Text(
-          value,
-          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-        ),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
         Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
       ],
     );
   }
 
-  Widget _buildTruckCard(Map<String, dynamic> truck) {
-    final isActive = truck['status'] == 'Actif';
+  Widget _buildTruckCard(Camion truck) {
+    final isActive = truck.status == 'Actif';
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
@@ -1235,7 +1367,7 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
       ),
       child: Column(
         children: [
-          // En-tête camion
+          // Header
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1250,26 +1382,25 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
                     color: const Color(0xFF1E3A8A).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.local_shipping, color: Color(0xFF1E3A8A), size: 28),
+                  child: const Icon(Icons.local_shipping,
+                      color: Color(0xFF1E3A8A), size: 28),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        truck['name'],
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        truck['model'],
-                        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                      ),
+                      Text(truck.name,
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text(truck.model,
+                          style: TextStyle(fontSize: 14, color: Colors.grey[600])),
                     ],
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: isActive
                         ? Colors.green.withOpacity(0.1)
@@ -1277,7 +1408,7 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    truck['status'],
+                    truck.status,
                     style: TextStyle(
                       color: isActive ? Colors.green : Colors.orange,
                       fontWeight: FontWeight.bold,
@@ -1289,21 +1420,23 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
             ),
           ),
 
-          // Détails
+          // Details
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                _buildTruckDetail(Icons.pin_outlined, 'Immatriculation', truck['plate']),
-                const SizedBox(height: 12),
-                _buildTruckDetail(Icons.water_drop_outlined, 'Capacité', '${truck['capacity']} L'),
-                const SizedBox(height: 12),
-                _buildTruckDetail(Icons.calendar_today_outlined, 'Année', truck['year']),
-                const SizedBox(height: 12),
-                _buildTruckDetail(Icons.build_outlined, 'Dernier entretien', truck['lastService']),
+                _buildTruckDetail(Icons.pin_outlined, 'Immatriculation', truck.plate),
                 const SizedBox(height: 12),
                 _buildTruckDetail(
-                    Icons.event_outlined, 'Prochain entretien', truck['nextService']),
+                    Icons.water_drop_outlined, 'Capacité', '${truck.capacity} L'),
+                const SizedBox(height: 12),
+                _buildTruckDetail(Icons.calendar_today_outlined, 'Année', truck.year),
+                const SizedBox(height: 12),
+                _buildTruckDetail(
+                    Icons.build_outlined, 'Dernier entretien', truck.lastService),
+                const SizedBox(height: 12),
+                _buildTruckDetail(
+                    Icons.event_outlined, 'Prochain entretien', truck.nextService),
               ],
             ),
           ),
@@ -1315,19 +1448,18 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {},
+                    onPressed: () => _showAddTruckDialog(existing: truck),
                     icon: const Icon(Icons.edit_outlined, size: 18),
                     label: const Text('Modifier'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFF1E3A8A),
                       side: const BorderSide(color: Color(0xFF1E3A8A)),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () {},
@@ -1337,10 +1469,21 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
                       backgroundColor: const Color(0xFF1E3A8A),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                          borderRadius: BorderRadius.circular(12)),
                       elevation: 0,
                     ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Delete button
+                IconButton(
+                  onPressed: () => _confirmDelete(truck),
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  tooltip: 'Supprimer',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.red.withOpacity(0.08),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
               ],
@@ -1358,54 +1501,156 @@ class _MyCamionsScreenState extends State<MyCamionsScreen> {
         const SizedBox(width: 12),
         Text(label, style: TextStyle(fontSize: 14, color: Colors.grey[600])),
         const Spacer(),
-        Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+        Text(value,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
       ],
     );
   }
 }
 
-class AddTruckBottomSheet extends StatelessWidget {
-  const AddTruckBottomSheet({Key? key}) : super(key: key);
+class AddTruckBottomSheet extends StatefulWidget {
+  final String token;
+  final Camion? existing;       // null = add mode, not null = edit mode
+  final VoidCallback onAdded;
+
+  const AddTruckBottomSheet({
+    Key? key,
+    required this.token,
+    required this.onAdded,
+    this.existing,
+  }) : super(key: key);
+
+  @override
+  State<AddTruckBottomSheet> createState() => _AddTruckBottomSheetState();
+}
+
+class _AddTruckBottomSheetState extends State<AddTruckBottomSheet> {
+  final _nameController = TextEditingController();
+  final _plateController = TextEditingController();
+  final _capacityController = TextEditingController();
+  final _modelController = TextEditingController();
+  final _yearController = TextEditingController();
+  bool isLoading = false;
+
+  bool get isEditMode => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    // Prefill if editing
+    if (isEditMode) {
+      _nameController.text = widget.existing!.name;
+      _plateController.text = widget.existing!.plate;
+      _capacityController.text = widget.existing!.capacity.toString();
+      _modelController.text = widget.existing!.model;
+      _yearController.text = widget.existing!.year;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _plateController.dispose();
+    _capacityController.dispose();
+    _modelController.dispose();
+    _yearController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_nameController.text.isEmpty ||
+        _plateController.text.isEmpty ||
+        _capacityController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Veuillez remplir tous les champs obligatoires')),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    Map<String, dynamic> res;
+
+    if (isEditMode) {
+      res = await ApiService.updateCamion(
+        widget.existing!.id,
+        name: _nameController.text.trim(),
+        plate: _plateController.text.trim(),
+        capacity: int.tryParse(_capacityController.text) ?? 0,
+        model: _modelController.text.trim(),
+        year: _yearController.text.trim(),
+      );
+    } else {
+      res = await ApiService.addCamion(
+        name: _nameController.text.trim(),
+        plate: _plateController.text.trim(),
+        capacity: int.tryParse(_capacityController.text) ?? 0,
+        model: _modelController.text.trim(),
+        year: _yearController.text.trim(),
+      );
+    }
+
+    setState(() => isLoading = false);
+
+    if (res['error'] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur: ${res['error']}')),
+      );
+    } else {
+      Navigator.pop(context);
+      widget.onAdded();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 20,
-        right: 20,
-        top: 20,
+        left: 20, right: 20, top: 20,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Ajouter un camion',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Text(
+            isEditMode ? 'Modifier le camion' : 'Ajouter un camion',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 20),
-          _buildInput('Nom du camion', Icons.local_shipping_outlined),
+          _buildInput('Nom du camion *', Icons.local_shipping_outlined, _nameController),
           const SizedBox(height: 12),
-          _buildInput('Immatriculation', Icons.pin_outlined),
+          _buildInput('Immatriculation *', Icons.pin_outlined, _plateController),
           const SizedBox(height: 12),
-          _buildInput('Capacité (litres)', Icons.water_drop_outlined,
+          _buildInput('Capacité (litres) *', Icons.water_drop_outlined, _capacityController,
               keyboardType: TextInputType.number),
           const SizedBox(height: 12),
-          _buildInput('Modèle', Icons.directions_car_outlined),
+          _buildInput('Modèle', Icons.directions_car_outlined, _modelController),
+          const SizedBox(height: 12),
+          _buildInput('Année', Icons.calendar_today_outlined, _yearController,
+              keyboardType: TextInputType.number),
           const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: isLoading ? null : _submit,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF1E3A8A),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
                 elevation: 0,
               ),
-              child: const Text('Ajouter', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              child: isLoading
+                  ? const SizedBox(
+                  height: 20, width: 20,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2))
+                  : Text(
+                  isEditMode ? 'Modifier' : 'Ajouter',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ),
           const SizedBox(height: 20),
@@ -1414,8 +1659,10 @@ class AddTruckBottomSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildInput(String label, IconData icon, {TextInputType? keyboardType}) {
+  Widget _buildInput(String label, IconData icon, TextEditingController controller,
+      {TextInputType? keyboardType}) {
     return TextFormField(
+      controller: controller,
       keyboardType: keyboardType,
       decoration: InputDecoration(
         labelText: label,
@@ -1438,7 +1685,6 @@ class AddTruckBottomSheet extends StatelessWidget {
     );
   }
 }
-
 // ============================================================
 // 3. PAIEMENTS & FACTURATION
 // ============================================================
@@ -2367,7 +2613,13 @@ class _HelpSupportScreenState extends State<HelpSupportScreen> {
       'isOpen': false,
     },
   ];
+  final TextEditingController _ticketController = TextEditingController();
 
+  @override
+  void dispose() {
+    _ticketController.dispose();
+    super.dispose();
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2542,6 +2794,7 @@ class _HelpSupportScreenState extends State<HelpSupportScreen> {
                   ),
                   const SizedBox(height: 16),
                   TextFormField(
+                    controller: _ticketController,
                     maxLines: 4,
                     decoration: InputDecoration(
                       hintText: 'Décrivez votre problème...',
@@ -2565,7 +2818,55 @@ class _HelpSupportScreenState extends State<HelpSupportScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {},
+                      onPressed: () async {
+                        final text = _ticketController.text.trim();
+                        if (text.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Veuillez décrire votre problème'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                          return;
+                        }
+
+                        // Show loading
+                        showDialog(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (_) => const Center(child: CircularProgressIndicator()),
+                        );
+
+                        final result = await ApiService.submitTicket(
+                          sujet:   'Support client',
+                          message: text,
+                        );
+
+                        if (!mounted) return;
+                        Navigator.pop(context); // close loading dialog
+
+                        if (result['error'] != null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(result['error']),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                          return;
+                        }
+
+                        _ticketController.clear();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Row(children: [
+                              Icon(Icons.check_circle, color: Colors.white),
+                              SizedBox(width: 8),
+                              Text('Réclamation envoyée avec succès !'),
+                            ]),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF1E3A8A),
                         foregroundColor: Colors.white,

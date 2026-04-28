@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'package:flutter/cupertino.dart';
 import 'package:http/http.dart' as http;
 
 class ApiService {
@@ -75,12 +76,14 @@ class ApiService {
   }) async {
     // Re-map real commande fields to the flat format lancer-direct expects
     final normalizedCommandes = commandes.map((c) => {
-      'id'        : (c['_id'] ?? c['id'] ?? '').toString(),
-      'lat'       : (c['position']?['lat'] as num?)?.toDouble() ?? 0.0,
-      'lon'       : (c['position']?['lon'] as num?)?.toDouble() ?? 0.0,
-      'quantity'  : (c['capacite'] as num?)?.toInt() ?? 0,
-      'price'     : (c['prix'] as num?)?.toDouble() ?? 0.0,
-      'address'   : c['adresse']?.toString() ?? '',
+      'id'      : (c['_id'] ?? c['id'] ?? '').toString(),
+      'lat'     : (c['position']?['lat'] as num?)?.toDouble() ?? 0.0,
+      'lon'     : (c['position']?['lon'] as num?)?.toDouble() ?? 0.0,
+      'quantity': (c['capacite'] as num?)?.toInt() ?? 0,
+      'price'   : (c['prix'] as num?)?.toDouble() ?? 0.0,
+      'demand'  : (c['capacite'] as num?)?.toInt() ?? 1,
+      'gain'    : (c['prix'] as num?)?.toDouble() ?? 0.0,
+      'address' : c['adresse']?.toString() ?? '',
     }).toList();
 
     return getVrpSolutionWithOrders(
@@ -109,11 +112,15 @@ class ApiService {
         vrpIdToOriginalId[vid] = (c['id'] ?? c['_id'] ?? '').toString();
         return {
           'id'         : vid,
-          'lat'        : (c['lat'] as num?)?.toDouble()   ?? 0.0,
-          'lon'        : (c['lon'] as num?)?.toDouble()   ?? 0.0,
-          'demand'     : (c['quantity'] as num?)?.toInt() ?? 0,
-          'gain'       : (c['price'] as num?)?.toDouble() ?? 0.0,
-          'description': c['address']?.toString()         ?? 'Client ${i + 1}',
+          'lat'        : (c['lat'] as num?)?.toDouble()      ?? 0.0,
+          'lon'        : (c['lon'] as num?)?.toDouble()      ?? 0.0,
+          'demand'     : (c['demand'] as num?)?.toInt()
+              ?? (c['quantity'] as num?)?.toInt()    // fallback to quantity
+              ?? 1,
+          'gain'       : (c['gain'] as num?)?.toDouble()
+              ?? (c['price'] as num?)?.toDouble()
+              ?? 0.0,
+          'description': c['address']?.toString()            ?? 'Client ${i + 1}',
         };
       }).toList();
 
@@ -176,7 +183,8 @@ class ApiService {
         'id'      : e.key + 1,
         'lat'     : (e.value['lat'] as num).toDouble(),
         'lon'     : (e.value['lon'] as num).toDouble(),
-        'capacity': capaciteVehicule.toInt(),
+        'capacity': (e.value['capacity'] as num?)?.toInt()
+            ?? capaciteVehicule.toInt(),  // ← use chauffeur's own capacity
         'nom'     : e.value['nom'],
       }).toList()
           : List.generate(nbVehicules, (i) => {
@@ -186,13 +194,29 @@ class ApiService {
         'capacity': capaciteVehicule.toInt(),
         'nom'     : 'Conducteur ${i + 1}',
       });
-
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('[VRP] ${conducteurs.length} conducteurs:');
+      for (final c in conducteurs) {
+        print('  → ${c['nom']}  id=${c['id']}  capacity=${c['capacity']}');
+      }
+      print('[VRP] ${vrpCommandes.length} commandes:');
+      int totalDemand = 0;
+      for (final c in vrpCommandes) {
+        totalDemand += (c['demand'] as num).toInt();
+        print('  → id=${c['id']}  demand=${c['demand']}  gain=${c['gain']}');
+      }
+      final totalCapacity = conducteurs.fold<int>(
+          0, (sum, c) => sum + (c['capacity'] as int));
+      print('[VRP] total demand=$totalDemand  total capacity=$totalCapacity  '
+          '${totalCapacity >= totalDemand ? "✅ OK" : "⚠️ UNDER-CAPACITY"}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       final body = jsonEncode({
         'conducteurs'    : conducteurs, // ← single entry, no duplicate
         'pop_size'       : 30,
         'generations'    : 80,
         'distance_matrix': distanceMatrix,
         'commandes'      : vrpCommandes,
+        'priorite'       : 'balance',
       });
 
       final res = await http.post(
@@ -223,6 +247,141 @@ class ApiService {
     on TimeoutException   { return {'error': 'VRP timeout.'}; }
     catch (e)             { return {'error': e.toString()}; }
   }
+
+
+// ─────────────────────────────────────────
+// CAMIONS  →  /api/camions
+// ─────────────────────────────────────────
+
+  static Future<List<dynamic>> getMyCamions() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/camions/my'),
+        headers: _authHeaders,
+      );
+      return _decodeList(response);
+    } on SocketException {
+      return [];
+    } on TimeoutException {
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>> addCamion({
+    required String name,
+    required String plate,
+    required int capacity,
+    String? model,
+    String? year,
+    String? lastService,
+    String? nextService,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/camions/add'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          'name': name,
+          'plate': plate,
+          'capacity': capacity,
+          if (model != null) 'model': model,
+          if (year != null) 'year': year,
+          if (lastService != null) 'lastService': lastService,
+          if (nextService != null) 'nextService': nextService,
+        }),
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> updateCamion(
+      String id, {
+        String? name,
+        String? plate,
+        int? capacity,
+        String? status,
+        String? model,
+        String? year,
+        String? lastService,
+        String? nextService,
+      }) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/camions/$id'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          if (name != null) 'name': name,
+          if (plate != null) 'plate': plate,
+          if (capacity != null) 'capacity': capacity,
+          if (status != null) 'status': status,
+          if (model != null) 'model': model,
+          if (year != null) 'year': year,
+          if (lastService != null) 'lastService': lastService,
+          if (nextService != null) 'nextService': nextService,
+        }),
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+  static Future<Map<String, dynamic>> getCommandesByStatus(String status) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/commandes?status=${Uri.encodeComponent(status)}'),
+        headers: _authHeaders,
+      );
+
+      print('[API] getCommandesByStatus(${status}) → ${response.statusCode}');
+      print('[API] body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is List) return {'data': data};
+        if (data is Map && data['commandes'] != null) return {'data': data['commandes']};
+        return data as Map<String, dynamic>;
+      }
+
+      return {'error': 'Erreur serveur ${response.statusCode}'};
+    } on SocketException {
+      return {'error': 'Connection error.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+
+
+  static Future<Map<String, dynamic>> deleteCamion(String id) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/camions/$id'),
+        headers: _authHeaders,
+      );
+      return _decode(response);
+    } on SocketException {
+      return {'error': 'Connection error. Check your internet.'};
+    } on TimeoutException {
+      return {'error': 'Request timed out. Try again.'};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
   // ─────────────────────────────────────────
   // AUTH  →  /api/auth
   // ─────────────────────────────────────────
@@ -307,6 +466,96 @@ class ApiService {
     }
   }
 
+
+  // In api_service.dart
+
+// Client reviews chauffeur
+  static Future<Map<String, dynamic>> submitClientReview({
+    required String commandeId,
+    required int note,
+    required List<String> tags,
+    String? commentaire,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$baseUrl/api/avis/client'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          'commande':    commandeId,
+          'note':        note,
+          'tags':        tags,
+          if (commentaire != null && commentaire.isNotEmpty) 'commentaire': commentaire,
+        }),
+      );
+      return _decode(res);
+    } on SocketException  { return {'error': 'Connection error.'}; }
+    on TimeoutException   { return {'error': 'Request timed out.'}; }
+    catch (e)             { return {'error': e.toString()}; }
+  }
+  static Future<Map<String, dynamic>> submitTicket({
+    required String sujet,
+    required String message,
+    String priorite = 'normale',
+  }) async {
+    try {
+      debugPrint('[TICKET] token: $token');
+      debugPrint('[TICKET] url: $baseUrl/api/reclamations/add');
+      debugPrint('[TICKET] headers: $_authHeaders');
+
+      final res = await http.post(
+        Uri.parse('$baseUrl/api/reclamations/add'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          'sujet':    sujet,
+          'message':  message,
+          'priorite': priorite,
+        }),
+      );
+
+      debugPrint('[TICKET] statusCode: ${res.statusCode}');
+      debugPrint('[TICKET] body: ${res.body}');
+
+      return _decode(res);
+    } on SocketException  {
+      debugPrint('[TICKET] SocketException');
+      return {'error': 'Connection error.'};
+    }
+    on TimeoutException   {
+      debugPrint('[TICKET] TimeoutException');
+      return {'error': 'Request timed out.'};
+    }
+    catch (e) {
+      debugPrint('[TICKET] error: $e');
+      return {'error': e.toString()};
+    }
+  }
+// Chauffeur reviews client
+  static Future<Map<String, dynamic>> submitChauffeurReview({
+    required String commandeId,
+    required int note,
+    required List<String> issues,
+    required List<String> positives,
+    required bool accessFacile,
+    required bool clientPresent,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$baseUrl/api/avis/chauffeur'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          'commande':      commandeId,
+          'note':          note,
+          'issues':        issues,
+          'positives':     positives,
+          'accessFacile':  accessFacile,
+          'clientPresent': clientPresent,
+        }),
+      );
+      return _decode(res);
+    } on SocketException  { return {'error': 'Connection error.'}; }
+    on TimeoutException   { return {'error': 'Request timed out.'}; }
+    catch (e)             { return {'error': e.toString()}; }
+  }
   // ─────────────────────────────────────────
   // CLIENT  →  /api/clients
   // ─────────────────────────────────────────
@@ -534,6 +783,8 @@ class ApiService {
       return {'error': e.toString()};
     }
   }
+
+
   // ─────────────────────────────────────────
   // COMMANDE  →  /api/commandes
   // ─────────────────────────────────────────
@@ -680,16 +931,25 @@ class ApiService {
 
   static Future<List<dynamic>> getPendingCommandes() async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/commandes/pending'),
-        headers: _authHeaders,
-      );
+      final uri = Uri.parse('$baseUrl/api/commandes/pending');
+      print('[API] GET $uri');
+      print('[API] Headers: $_authHeaders');
+
+      final response = await http.get(uri, headers: _authHeaders);
+
+      print('[API] Status: ${response.statusCode}');
+      print('[API] Body: ${response.body}');
+
       return _decodeList(response);
-    } on SocketException {
+    } on SocketException catch (e) {
+      print('[API] SocketException: $e');
       return [];
-    } on TimeoutException {
+    } on TimeoutException catch (e) {
+      print('[API] TimeoutException: $e');
       return [];
-    } catch (e) {
+    } catch (e, stack) {
+      print('[API] Unknown error: $e');
+      print('[API] Stack: $stack');
       return [];
     }
   }
@@ -977,17 +1237,24 @@ class ApiService {
 // COMMANDE  →  /api/commandes (AJOUTS)
 // ─────────────────────────────────────────
 
-  /// ✅ NOUVEAU : Mettre à jour le statut d'une commande
   static Future<Map<String, dynamic>> updateCommandeStatus({
     required String commandeId,
     required String status,
-    required prix,
+    double? prix,
   }) async {
     try {
+      // Use the correct endpoint based on status
+      final endpoint = status == 'livrée'
+          ? '$baseUrl/api/commandes/livree/$commandeId'
+          : '$baseUrl/api/commandes/accept/$commandeId';
+
+      final body = <String, dynamic>{'status': status};
+      if (prix != null) body['prix'] = prix;
+
       final response = await http.put(
-        Uri.parse('$baseUrl/api/commandes/status/$commandeId'),
+        Uri.parse(endpoint),   // ← was: /api/commandes/status/$commandeId
         headers: _authHeaders,
-        body: jsonEncode({'status': status}),
+        body: jsonEncode(body),
       );
       return _decode(response);
     } on SocketException {

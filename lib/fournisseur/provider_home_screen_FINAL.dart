@@ -54,6 +54,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   int _nbTestVehicles = 1;
   List<Polyline> _polylines     = [];
   List<Marker>   _markers       = [];
+  List<Map<String, dynamic>> _realOrders = [];
   bool           _loadingRoutes = false;
   List<Map<String, dynamic>> _testChauffeurs = [];
   List<_RouteStop> _optimizedStops = [];
@@ -62,19 +63,19 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
   List<Map<String, dynamic>> _testOrders = [];
   Map<String, bool> _stopAcceptance = {};
-  Map<String, String> _orderStatus = {}; // 'pending' | 'accepted' | 'rejected'
+  // FIX: orderStatus tracks 'pending' | 'accepted' | 'rejected' per stop
+  Map<String, String> _orderStatus = {};
   StreamSubscription<Position>? _gpsSub;
   Timer?                        _gpsUploadTimer;
 
-  // ── Simulation state ────────────────────────────────────────────
-  Map<String, List<LatLng>> _routePointsByChauffeur = {}; // chauffeur nom → points
+  Map<String, List<LatLng>> _routePointsByChauffeur = {};
   List<LatLng> _fullRoutePoints = [];
   int  _simIndex   = 0;
   bool _simRunning = false;
   bool _simStarted = false;
   LatLng? _simPosition;
 
-  static const int      _simStepSize = 1;
+  static const int      _simStepSize = 4;
   static const Duration _simInterval = Duration(milliseconds: 200);
 
   Timer? _simTimer;
@@ -82,14 +83,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   int  _currentStopTarget    = 0;
   bool _arrivalDialogShowing = false;
   int  _simUploadCounter     = 0;
-  static const int _uploadEveryNTicks = 10;
+  static const int _uploadEveryNTicks = 25;
 
-  // ── NEW: tracks whether the current route is a preview (not yet accepted) ──
   bool _isPreviewRoute = false;
-
-  // ─────────────────────────────────────────────────────────
-  // INIT / DISPOSE
-  // ─────────────────────────────────────────────────────────
+  String _myName = 'Moi';
 
   @override
   void initState() {
@@ -155,7 +152,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       _simStarted        = true;
     });
 
-    // Now start the timer directly — skip the chauffeur lookup branch
     _simTimer?.cancel();
     _simTimer = Timer.periodic(_simInterval, (_) async {
       if (!mounted) { _simTimer?.cancel(); return; }
@@ -196,22 +192,62 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         if (dist < 50) {
           _arrivalDialogShowing = true;
           _simTimer?.cancel();
+          setState(() => _simRunning = false);
           await _showDeliveryCompletionDialog(stop);
         }
       }
     });
   }
 
+  Future<void> _loadRealOrdersAsPreview() async {
+    if (_loadingRoutes) return;
 
+    setState(() => _loadingRoutes = true);
 
+    final raw = (await ApiService.getCommandes())
+        .cast<Map<String, dynamic>>();
 
+    if (raw.isEmpty) {
+      setState(() => _loadingRoutes = false);
+      _showSnack('Aucune commande en livraison', Colors.orange);
+      return;
+    }
+
+    _realOrders = raw.map((c) => {
+      'id':         (c['_id'] ?? c['id']).toString(),
+      'lat':        (c['position']?['lat'] as num?)?.toDouble() ?? 0.0,
+      'lon':        (c['position']?['lon'] as num?)?.toDouble() ?? 0.0,
+      'quantity':   (c['capacite'] as num?)?.toInt() ?? 0,
+      'price':      (c['prix'] as num?)?.toDouble() ?? 0.0,
+      'address':    c['adresse']?.toString() ?? '',
+      'clientName': (() {
+        final cl = c['client'];
+        return cl is Map
+            ? '${cl['prenom'] ?? ''} ${cl['nom'] ?? ''}'.trim()
+            : 'Client';
+      })(),
+    }).toList();
+
+    setState(() {
+      _testOrders     = _realOrders;
+      _isPreviewRoute = true;
+      _loadingRoutes  = false;
+    });
+
+    await _loadOptimizedRoutes();
+  }
+
+  // FIX: _startSimulationForChauffeur — no longer calls _startSimulation()
+  // directly; instead rebuilds route for that chauffeur then starts the timer.
   void _startSimulationForChauffeur(String chauffeurNom) {
+    print('>>> _startSimulationForChauffeur: $chauffeurNom');
     final route = _routePointsByChauffeur[chauffeurNom] ?? [];
     if (route.isEmpty) {
       _showSnack('Pas d\'itinéraire pour $chauffeurNom', Colors.orange);
       return;
     }
 
+    // Collect only this chauffeur's accepted stops
     final chauffeurStops = _allStops
         .where((s) =>
     _orderStatus[s.mongoId] == 'accepted' &&
@@ -226,26 +262,25 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       _currentStopTarget    = 0;
       _simIndex             = 0;
       _simPosition          = route.first;
+      // FIX: reset _simRunning to false so _startSimulation guard doesn't block
       _simStarted           = false;
       _simRunning           = false;
       _arrivalDialogShowing = false;
-      currentIndex          = 0; // ← switch to map tab
+      currentIndex          = 0;
+      _isPreviewRoute       = false;
     });
 
-    // Move map to chauffeur starting position
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final providerState = context.findAncestorStateOfType<ProviderHomeScreenState>();
-      if (providerState != null) {
-        providerState._testOrders = [];        // ← ensure no test orders
-        providerState._isPreviewRoute = false;
-        providerState.switchToMapTab();        // ← switch to map
-        providerState._loadOptimizedRoutes();  // ← load REAL routes from API
-      }
+      _mapController.move(route.first, 14);
+      _startSimulation();
     });
   }
 
   void _showChauffeurSummarySheet() {
+    print('>>> _stopChauffeur: $_stopChauffeur');
+    print('>>> _allStops count: ${_allStops.length}');
+    print('>>> _testChauffeurs: ${_testChauffeurs.map((c) => c['nom']).toList()}');
     final colorOptions = [
       const Color(0xFF1565C0), Colors.green.shade700,
       Colors.orange.shade700,  Colors.purple.shade700,
@@ -257,10 +292,14 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       colorOptions[i % colorOptions.length];
     }
 
+    // FIX: include ALL stops (not just accepted) in the summary sheet
     final Map<String, List<_RouteStop>> byChauffeur = {};
-    for (final stop in _allStops) {
-      final nom = _stopChauffeur[stop.mongoId];
-      if (nom == null) continue;
+    for (int i = 0; i < _allStops.length; i++) {
+      final stop = _allStops[i];
+      final nom = _stopChauffeur[stop.mongoId]
+          ?? (_testChauffeurs.isNotEmpty
+              ? _testChauffeurs[i % _testChauffeurs.length]['nom'].toString()
+              : 'Conducteur 1');
       byChauffeur.putIfAbsent(nom, () => []).add(stop);
     }
 
@@ -304,6 +343,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                         .fold(0.0, (sum, s) => sum + s.distanceKm!);
                     final totalMin = stops.where((s) => s.durationMin != null)
                         .fold(0.0, (sum, s) => sum + s.durationMin!);
+                    final totalQuantity = stops.fold(0.0, (sum, s) => sum + s.quantity);
 
                     return ExpansionTile(
                       leading: Container(
@@ -314,47 +354,101 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       title: Text(nom, style: const TextStyle(
                           fontSize: 13, fontWeight: FontWeight.bold)),
                       subtitle: Text(
-                        '${stops.length} arrêt(s) · ${totalKm.toStringAsFixed(1)} km · ${totalMin.round()} min',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                        '${stops.length} arrêt(s) · ${totalKm.toStringAsFixed(1)} km · ${totalMin.round()} min · ${totalQuantity.toStringAsFixed(0)} L',
+                        style: TextStyle(fontSize: 11, color: Colors.grey.shade900),
                       ),
-                      children: stops.map((stop) => ListTile(
-                        dense: true,
-                        leading: CircleAvatar(
-                          backgroundColor: color,
-                          radius: 14,
-                          child: Text('${stop.index}',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 11,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                        title: Text(stop.clientName,
-                            style: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.w600)),
-                        subtitle: stop.address.isNotEmpty
-                            ? Text(stop.address,
-                            style: const TextStyle(fontSize: 10),
-                            maxLines: 1, overflow: TextOverflow.ellipsis)
-                            : null,
-                        trailing: stop.distanceKm != null
-                            ? Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text('${stop.distanceKm!.toStringAsFixed(1)} km',
-                                style: TextStyle(color: color, fontSize: 11,
+
+                      // FIX: "Simuler" button per chauffeur in summary sheet
+                      children: stops.map((stop) {
+                        final status = _orderStatus[stop.mongoId] ?? 'pending';
+                        return ListTile(
+                          dense: true,
+                          leading: CircleAvatar(
+                            backgroundColor: status == 'accepted'
+                                ? color
+                                : status == 'rejected'
+                                ? Colors.grey.shade300
+                                : color.withOpacity(0.4),
+                            radius: 14,
+                            child: Text('${stop.index}',
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 11,
                                     fontWeight: FontWeight.bold)),
-                            if (stop.durationMin != null)
-                              Text('${stop.durationMin!.round()} min',
+                          ),
+                          title: Text(stop.clientName,
+                              style: TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w600,
+                                  color: status == 'rejected'
+                                      ? Colors.grey
+                                      : Colors.black87,
+                                  decoration: status == 'rejected'
+                                      ? TextDecoration.lineThrough
+                                      : null)),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (stop.address.isNotEmpty)
+                                Text(stop.address,
+                                    style: const TextStyle(fontSize: 10),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                              // Status badge
+                              Container(
+                                margin: const EdgeInsets.only(top: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: status == 'accepted'
+                                      ? Colors.green.shade50
+                                      : status == 'rejected'
+                                      ? Colors.red.shade50
+                                      : Colors.orange.shade50,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  status == 'accepted'
+                                      ? 'Acceptée'
+                                      : status == 'rejected'
+                                      ? 'Refusée'
+                                      : 'En attente',
+                                  style: TextStyle(
+                                      fontSize: 9,
+                                      color: status == 'accepted'
+                                          ? Colors.green.shade700
+                                          : status == 'rejected'
+                                          ? Colors.red.shade700
+                                          : Colors.orange.shade700,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                          trailing: stop.distanceKm != null
+                              ? Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text('${stop.distanceKm!.toStringAsFixed(1)} km',
+                                  style: TextStyle(color: color, fontSize: 11,
+                                      fontWeight: FontWeight.bold)),
+                              if (stop.durationMin != null)
+                                Text('${stop.durationMin!.round()} min',
+                                    style: const TextStyle(
+                                        color: Colors.grey, fontSize: 10)),
+                              Text('${stop.quantity.toStringAsFixed(0)} L',
                                   style: const TextStyle(
                                       color: Colors.grey, fontSize: 10)),
-                          ],
-                        )
-                            : null,
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          _mapController.move(stop.position, 15);
-                        },
-                      )).toList(),
+
+
+                            ],
+                          )
+                              : null,
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _mapController.move(stop.position, 15);
+                          },
+                        );
+                      }).toList(),
                     );
                   }).toList(),
                 ),
@@ -366,9 +460,26 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     );
   }
 
-
   void _showSimulationPicker() {
-    // Get chauffeurs with accepted orders
+    print('>>> _showSimulationPicker called');
+    print('>>> _allStops count: ${_allStops.length}');
+    print('>>> _orderStatus: $_orderStatus');
+    print('>>> _fullRoutePoints count: ${_fullRoutePoints.length}');
+    print('>>> _routePointsByChauffeur keys: ${_routePointsByChauffeur.keys.toList()}');
+
+    // FIX: for test orders, if nothing is explicitly accepted yet, treat all
+    // stops as accepted so the picker can still show chauffeurs.
+    final hasAnyAccepted = _orderStatus.values.any((v) => v == 'accepted');
+    if (!hasAnyAccepted && _allStops.isNotEmpty) {
+      // Auto-accept all for simulation purposes
+      for (final stop in _allStops) {
+        _orderStatus.putIfAbsent(stop.mongoId, () => 'accepted');
+        if (_orderStatus[stop.mongoId] == 'pending') {
+          _orderStatus[stop.mongoId] = 'accepted';
+        }
+      }
+    }
+
     final Map<String, List<_RouteStop>> acceptedByChauffeur = {};
     for (final stop in _allStops) {
       if (_orderStatus[stop.mongoId] == 'accepted') {
@@ -389,7 +500,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       return;
     }
 
-    // Build chauffeur colors
     final colorOptions = [
       const Color(0xFF1565C0), Colors.green.shade700,
       Colors.orange.shade700,  Colors.purple.shade700,
@@ -485,7 +595,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     );
   }
 
-
   void _showOrderAcceptSheet() {
     showModalBottomSheet(
       context: context,
@@ -508,7 +617,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // handle
                 Container(
                   width: 36, height: 4,
                   margin: const EdgeInsets.symmetric(vertical: 10),
@@ -518,7 +626,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                   ),
                 ),
 
-                // header
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                   child: Row(
@@ -559,12 +666,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     shrinkWrap: true,
                     children: [
 
-                      // ── PENDING ──────────────────────────────
                       if (pending.isNotEmpty) ...[
                         _sectionHeader('En attente', Colors.orange, pending.length),
                         ...pending.map((stop) => Column(
                           children: [
-                            // chauffeur badge
                             if (_stopChauffeur[stop.mongoId] != null)
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
@@ -587,7 +692,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                               stop: stop,
                               status: 'pending',
                               onAccept: () {
-                                setModal(() => setState(() {        // ← setModal + setState together
+                                setModal(() => setState(() {
                                   _orderStatus[stop.mongoId] = 'accepted';
                                   _isPreviewRoute = false;
                                 }));
@@ -604,8 +709,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                         )),
                       ],
 
-                      // ── ACCEPTED ─────────────────────────────
-                      // ── ACCEPTED section — show chauffeur + route info ────────
                       if (accepted.isNotEmpty) ...[
                         _sectionHeader('Acceptées', Colors.green, accepted.length),
                         ...accepted.map((stop) => Column(
@@ -642,7 +745,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                         )),
                       ],
 
-                      // ── REJECTED ─────────────────────────────
                       if (rejected.isNotEmpty) ...[
                         _sectionHeader('Refusées', Colors.red, rejected.length),
                         ...rejected.map((stop) => _orderTile(
@@ -665,11 +767,11 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                   child: SizedBox(
                     width: double.infinity,
-                    child:ElevatedButton.icon(
+                    child: ElevatedButton.icon(
                       onPressed: accepted.isNotEmpty
                           ? () {
                         Navigator.pop(ctx);
-                        setState(() => currentIndex = 0); // ← switch to map tab
+                        setState(() => currentIndex = 0);
                       }
                           : null,
                       icon: const Icon(Icons.check_circle_outline),
@@ -687,22 +789,35 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 8),
+                // FIX: "Commandes réelles" button properly placed
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _loadRealOrdersAsPreview();
+                      },
+                      icon: const Icon(Icons.local_shipping),
+                      label: const Text('Commandes réelles'),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           );
         },
       ),
     );
-    OrdersScreen(
-      onOrdersRegenerated: () {
-        setState(() {
-          _orderStatus.clear();
-          _optimizedStops.clear();
-          _stopChauffeur.clear();
-        });
-      },
-    );
   }
+
   Widget _sectionHeader(String label, Color color, int count) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
@@ -789,7 +904,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             ? Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // reject
             GestureDetector(
               onTap: onReject,
               child: Container(
@@ -804,7 +918,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            // accept
             GestureDetector(
               onTap: onAccept,
               child: Container(
@@ -822,7 +935,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         )
             : status == 'accepted'
             ? GestureDetector(
-          onTap: onReject, // undo → back to pending
+          onTap: onReject,
           child: Container(
             padding: const EdgeInsets.symmetric(
                 horizontal: 10, vertical: 6),
@@ -839,7 +952,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ),
         )
             : GestureDetector(
-          onTap: onAccept, // restore → back to pending
+          onTap: onAccept,
           child: Container(
             padding: const EdgeInsets.symmetric(
                 horizontal: 10, vertical: 6),
@@ -883,12 +996,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
     if (filteredStops.isEmpty) return;
 
-    // Group by chauffeur
     final Map<String, List<_RouteStop>> byChauffeur = {};
     for (final stop in filteredStops) {
       final nom = _stopChauffeur[stop.mongoId] ?? 'default';
       byChauffeur.putIfAbsent(nom, () => []).add(stop);
-
     }
 
     final List<Polyline>             allPolylines          = [];
@@ -906,23 +1017,18 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       final nom   = entry.key;
       final stops = entry.value;
 
-      // ── Get THIS chauffeur's real GPS position ──
       final chauffeurData = _testChauffeurs.firstWhere(
             (c) => c['nom'].toString() == nom,
         orElse: () => <String, Object>{},
       );
 
-      final double startLat = (chauffeurData['lat'] as num?)?.toDouble()
-          ?? _currentPosition.latitude;
-      final double startLon = (chauffeurData['lon'] as num?)?.toDouble()
-          ?? _currentPosition.longitude;
+      final double startLat = _testOrders.isEmpty
+          ? _currentPosition.latitude
+          : (chauffeurData['lat'] as num?)?.toDouble() ?? _currentPosition.latitude;
+      final double startLon = _testOrders.isEmpty
+          ? _currentPosition.longitude
+          : (chauffeurData['lon'] as num?)?.toDouble() ?? _currentPosition.longitude;
       final startPoint = LatLng(startLat, startLon);
-      print('>>> rebuild: nom=$nom');
-      print('>>> chauffeurData: $chauffeurData');
-      print('>>> _testChauffeurs: ${_testChauffeurs.map((c) => c['nom']).toList()}');
-      print('>>> startLat=$startLat startLon=$startLon');
-      print('>>> _currentPosition=${_currentPosition.latitude}, ${_currentPosition.longitude}');
-      _log('rebuild: chauffeur=$nom starts at ($startLat, $startLon)');
 
       final List<LatLng> waypoints = [
         startPoint,
@@ -959,7 +1065,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ));
       }
 
-      // Store per-chauffeur — NOT concatenated
       routePointsByChauffeur[nom] = routePoints;
       totalDist += routeDist;
       colorIdx++;
@@ -967,7 +1072,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
     if (!mounted) return;
 
-    // For simulation: use the first (and usually only) accepted chauffeur's route
     final firstChauffeurRoute = routePointsByChauffeur.values.isNotEmpty
         ? routePointsByChauffeur.values.first
         : <LatLng>[];
@@ -976,22 +1080,19 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       _polylines                = allPolylines;
       _markers                  = _buildMarkers(filteredStops);
       _routePointsByChauffeur   = routePointsByChauffeur;
-      _fullRoutePoints          = firstChauffeurRoute; // correct start point
+      _fullRoutePoints          = firstChauffeurRoute;
       _optimizedStops           = filteredStops;
       _totalDistanceKm          = totalDist;
       _isPreviewRoute           = false;
     });
-
-    _log('rebuild done: ${filteredStops.length} stops, '
-        'first route starts at ${firstChauffeurRoute.isNotEmpty ? firstChauffeurRoute.first : "empty"}');
   }
+
   Future<void> _applyAcceptedStops() async {
     final rejectedIds = _stopAcceptance.entries
         .where((e) => e.value == false)
         .map((e) => e.key)
         .toList();
 
-    // Optionally cancel rejected ones via API
     for (final id in rejectedIds) {
       try {
         await ApiService.cancelCommande(id);
@@ -1004,18 +1105,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           .toList();
     });
 
-    // Rebuild the polyline with only accepted stops
     await _loadOptimizedRoutes();
     _showSnack(
       '${_optimizedStops.length} arrêt(s) confirmés ✓',
       Colors.green,
     );
   }
-  // ─────────────────────────────────────────────────────────
-  // PUBLIC — NEW: preview optimized route for pending orders
-  // Called by OrdersScreen right after orders are generated/loaded,
-  // BEFORE the chauffeur accepts anything.
-  // ─────────────────────────────────────────────────────────
+
   void previewRouteForOrders(List<Map<String, dynamic>> pendingOrders, {int nbVehicules = 1}) {
     final fakeOrders = pendingOrders
         .where((o) => o['id'].toString().startsWith('gen_'))
@@ -1023,31 +1119,29 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
     _log('previewRouteForOrders: ${fakeOrders.length} fake');
 
-    // ← Only generate new chauffeurs if we don't have any yet
-    if (_testChauffeurs.isEmpty) {
-      _generateRandomChauffeurs();
-    }
+
+    _generateRandomChauffeurs();
 
     setState(() {
       _testOrders     = fakeOrders;
+
       _isPreviewRoute = true;
       _nbTestVehicles = nbVehicules;
       _stopChauffeur.clear();
+
       _orderStatus.clear();
     });
 
     _loadOptimizedRoutes();
   }
 
-  // ─────────────────────────────────────────────────────────
-  // PUBLIC — NEW: just switch to the map tab (route already computed)
-  // ─────────────────────────────────────────────────────────
   void switchToMapTab() {
     setState(() {
       currentIndex    = 0;
-      _isPreviewRoute = false; // orders were accepted — route is now active
+      _isPreviewRoute = false;
     });
   }
+
   void reloadRealRoutes() {
     setState(() {
       _testOrders     = [];
@@ -1056,10 +1150,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     _loadOptimizedRoutes();
   }
 
-  // ─────────────────────────────────────────────────────────
-  // PUBLIC — called by OrdersScreen after accepting a commande
-  // (kept for backward compatibility — now just a thin wrapper)
-  // ─────────────────────────────────────────────────────────
   void goToMapWithRoute({
     required String  commandeId,
     required double? destLat,
@@ -1070,7 +1160,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     setState(() {
       currentIndex    = 0;
       _isPreviewRoute = false;
-      _testOrders     = []; // ✅ always clear
+      _testOrders     = [];
     });
     if (!isOnline) {
       setState(() => isOnline = true);
@@ -1081,24 +1171,20 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     }
   }
 
-  // ─────────────────────────────────────────────────────────
-  // GPS
-  // ─────────────────────────────────────────────────────────
   void _generateRandomChauffeurs() {
     final rng        = Random();
-    final firstNames = ['Karim', 'Yacine', 'Mourad', 'Bilal', 'Amine'];
-    final lastNames  = ['Benali', 'Meziane', 'Cherif', 'Mansouri', 'Ferhat'];
+    final firstNames = ['Karim', 'Yacine', 'Mourad', 'Bilal', 'Amine','rabah','ramzy'];
+    final lastNames  = ['Benali', 'Meziane', 'Cherif', 'Mansouri', 'Ferhat','rezik','naoui'];
 
-    // Spread across different Alger communes — far apart but same wilaya
     final algerPositions = [
-      {'lat': 36.7372, 'lon': 3.0865},  // Hussein Dey
-      {'lat': 36.7762, 'lon': 3.0589},  // El Biar
-      {'lat': 36.6923, 'lon': 3.1481},  // Birtouta
-      {'lat': 36.8031, 'lon': 3.0412},  // Bab Ezzouar
-      {'lat': 36.7206, 'lon': 2.9871},  // Bir Mourad Raïs
-      {'lat': 36.7539, 'lon': 2.8936},  // Chéraga
-      {'lat': 36.8245, 'lon': 3.1023},  // Rouïba
-      {'lat': 36.6711, 'lon': 3.0134},  // Eucalyptus
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7762, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
     ];
 
     final chauffeurs = List.generate(5 + rng.nextInt(3), (i) {
@@ -1110,6 +1196,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         'disponible': true,
         'lat'       : (base['lat'] as double) + (rng.nextDouble() - 0.5) * 0.01,
         'lon'       : (base['lon'] as double) + (rng.nextDouble() - 0.5) * 0.01,
+        'capacity': 3000 + rng.nextInt(2001),
       };
     });
 
@@ -1207,24 +1294,24 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         _optimizedStops   = [];
         _totalDistanceKm  = null;
         _testOrders       = [];
+        _realOrders       = [];
         _fullRoutePoints  = [];
         _isPreviewRoute   = false;
+        _testChauffeurs = [];
       });
       _showSnack('Vous êtes maintenant HORS LIGNE', Colors.grey);
     }
   }
 
-  // ─────────────────────────────────────────────────────────
-  // SIMULATION CONTROLS
-  // ─────────────────────────────────────────────────────────
-
+  // FIX: _startSimulation now properly handles the _simRunning guard
+  // by only blocking if already running AND not being called for resume
   void _startSimulation({bool resume = false}) {
     if (_fullRoutePoints.isEmpty) {
       _showSnack('Aucun itinéraire disponible pour la simulation', Colors.orange);
       return;
     }
 
-    // ← add this guard
+    // FIX: only block if already running (not for a fresh start after picker)
     if (_simRunning) return;
 
     setState(() {
@@ -1257,8 +1344,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         return;
       }
 
-
-      // ← move first, THEN check arrival
       setState(() {
         _simIndex    = (_simIndex + _simStepSize)
             .clamp(0, _fullRoutePoints.length - 1);
@@ -1274,8 +1359,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         );
       }
 
-      // ← only check arrival after moving, and only if index > 10 to avoid
-      //   triggering immediately at start
       if (!_arrivalDialogShowing &&
           _simIndex > 10 &&
           _currentStopTarget < _optimizedStops.length) {
@@ -1288,6 +1371,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         if (dist < 50) {
           _arrivalDialogShowing = true;
           _simTimer?.cancel();
+          setState(() => _simRunning = false);
           await _showDeliveryCompletionDialog(stop);
         }
       }
@@ -1367,15 +1451,24 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ),
           ElevatedButton.icon(
             onPressed: () async {
-              Navigator.pop(ctx, true); // ← close dialog with true FIRST
+              Navigator.pop(ctx, true);
+              try {
+                await ApiService.updateCommandeStatus(
+                  commandeId: stop.mongoId,
+                  status: 'livrée',
+                );
+              } catch (e) {
+                debugPrint('[TRACKING] Failed to update status: $e');
+              }
               await Future.delayed(const Duration(milliseconds: 100));
               if (mounted) {
-                Navigator.push(context, MaterialPageRoute(
+                await Navigator.push(context, MaterialPageRoute(
                   builder: (_) => ChauffeurReviewScreen(
                     commandeId:  stop.mongoId,
                     clientNom:   stop.clientName,
                     volumeLivre: stop.quantity,
                     adresse:     stop.address,
+                    driverPhone: stop.driverPhone,
                   ),
                 ));
               }
@@ -1411,13 +1504,15 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         if (_currentStopTarget < _optimizedStops.length) {
           _startSimulation(resume: true);
         } else {
-          _showSnack('Toutes les livraisons sont terminées ', Colors.green);
+          _showSnack('Toutes les livraisons sont terminées', Colors.green);
         }
       } catch (e) {
+        print('>>> error: $e');
         _showSnack('Erreur lors de la confirmation', Colors.red);
         setState(() => _arrivalDialogShowing = false);
         _startSimulation(resume: true);
       }
+
     } else {
       setState(() => _arrivalDialogShowing = false);
       _startSimulation(resume: true);
@@ -1444,9 +1539,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     });
   }
 
-  // ─────────────────────────────────────────────────────────
-  // CORE: decide test data vs real API
-  // ─────────────────────────────────────────────────────────
   Future<void> _loadOptimizedRoutes() async {
     if (_loadingRoutes) return;
 
@@ -1456,33 +1548,21 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     _log('_loadOptimizedRoutes called');
     _log('  testOrders count : ${_testOrders.length}');
     _log('  isPreviewRoute   : $_isPreviewRoute');
-    _log('  currentPosition  : ${_currentPosition.latitude.toStringAsFixed(5)}, '
-        '${_currentPosition.longitude.toStringAsFixed(5)}');
-
-
     _log('  → MODE: REAL API (VRP/NSGA-II or NN fallback)');
     _log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     await _loadOptimizedRoutesFromApi();
-
   }
 
-  // ─────────────────────────────────────────────────────────
-  // NEAREST-NEIGHBOUR GREEDY SORT
-  // ─────────────────────────────────────────────────────────
   List<Map<String, dynamic>> _nearestNeighbourSort(
       LatLng startPosition,
       List<Map<String, dynamic>> orders,
       ) {
-    _log('  NN sort: ${orders.length} orders, start=(${startPosition.latitude.toStringAsFixed(4)}, '
-        '${startPosition.longitude.toStringAsFixed(4)})');
-
     if (orders.isEmpty) return [];
 
     final unvisited = List<Map<String, dynamic>>.from(orders);
     final sorted    = <Map<String, dynamic>>[];
     double curLat   = startPosition.latitude;
     double curLon   = startPosition.longitude;
-    int    step     = 0;
 
     while (unvisited.isNotEmpty) {
       int    bestIdx  = 0;
@@ -1503,18 +1583,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       final chosen = unvisited.removeAt(bestIdx);
       sorted.add(chosen);
 
-      final chosenLat = (chosen['lat'] as num?)?.toDouble() ?? curLat;
-      final chosenLon = (chosen['lon'] as num?)?.toDouble() ?? curLon;
-      final label     = chosen['clientName']
-          ?? chosen['_mongoId']
-          ?? chosen['id']
-          ?? 'stop${step + 1}';
-      _log('    step ${step + 1}: $label  dist=${bestDist.toStringAsFixed(2)} km'
-          '  pos=(${chosenLat.toStringAsFixed(4)}, ${chosenLon.toStringAsFixed(4)})');
-
-      curLat = chosenLat;
-      curLon = chosenLon;
-      step++;
+      curLat = (chosen['lat'] as num?)?.toDouble() ?? curLat;
+      curLon = (chosen['lon'] as num?)?.toDouble() ?? curLon;
     }
 
     return sorted;
@@ -1544,13 +1614,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     await _loadOptimizedRoutesFromApi();
   }
 
-  // ─────────────────────────────────────────────────────────
-  // REAL MODE: VRP solution from API, NN fallback
-  // ─────────────────────────────────────────────────────────
   Future<void> _loadOptimizedRoutesFromApi() async {
     setState(() => _loadingRoutes = true);
-    _stopChauffeur.clear();
-    _log('  testOrders ids: ${_testOrders.map((o) => o['id']).toList()}');
     try {
       List<Map<String, dynamic>> commandes;
       Map<String, dynamic>       vrpResult;
@@ -1576,17 +1641,30 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         }).toList();
       } else {
         _log('UNIFIED MODE: fetching commandes from real API...');
-        commandes = (await ApiService.getCommandes(status: 'en livraison'))
-            .cast<Map<String, dynamic>>();
-        _log('UNIFIED MODE: ${commandes.length} commandes returned');
+        final all = await Future.wait([
+          ApiService.getCommandes(),
+          ApiService.getPendingCommandes(),
+        ]);
+
+        final seen = <String>{};
+        commandes = [...all[0], ...all[1]]
+            .cast<Map<String, dynamic>>()
+            .where((c) {
+          final id = (c['_id'] ?? c['id'] ?? '').toString();
+          if (seen.contains(id)) return false;
+          seen.add(id);
+          final status = (c['status'] ?? c['statut'] ?? '').toString();
+          return status == 'en livraison' || status == 'en attente';
+        })
+            .toList();
 
         if (commandes.isEmpty) {
-          _log('UNIFIED MODE: no commandes → clearing map');
           setState(() {
             _polylines       = [];
             _markers         = [];
             _optimizedStops  = [];
             _totalDistanceKm = null;
+            _realOrders      = [];
             _fullRoutePoints = [];
             _loadingRoutes   = false;
           });
@@ -1594,21 +1672,24 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           return;
         }
 
-        _log('UNIFIED MODE: fetching VRP solution...');
         vrpResult = await ApiService.getVrpSolutionWithRealOrders(
           commandes:        commandes,
           depotLat:         _currentPosition.latitude,
           depotLon:         _currentPosition.longitude,
           capaciteVehicule: _capacityLiters > 0 ? _capacityLiters : 5000,
         );
-      }
-
-      for (final c in commandes) {
-        final mongoId = (c['_id'] ?? c['id']).toString();
-        final vrpId   = c['vrpId']?.toString() ?? 'NULL';
-        final lat     = c['position']?['lat'];
-        final lon     = c['position']?['lon'];
-        _log('  commande mongoId=$mongoId  vrpId=$vrpId  lat=$lat  lon=$lon');
+// Set real user as the single chauffeur for real orders
+        print('>>> setting real chauffeur, _testOrders.length: ${_testOrders.length}');
+        _testChauffeurs = [
+          {
+            'id'        : 'me',
+            'nom'       : _myName,
+            'disponible': true,
+            'lat'       : _currentPosition.latitude,
+            'lon'       : _currentPosition.longitude,
+            'capacity'  : _capacityLiters > 0 ? _capacityLiters : 5000,
+          }
+        ];
       }
 
       final Map<String, Map<String, dynamic>> commandeById = {
@@ -1616,12 +1697,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           (c['_id'] ?? c['id']).toString(): c,
       };
 
-      _log('UNIFIED MODE: VRP keys = ${vrpResult.keys.toList()}');
-
       List<String> orderedMongoIds = [];
       bool         usedVrp         = false;
 
-      // ── 1. Parse VRP result ──────────────────────────────────────
       if (vrpResult['error'] == null && vrpResult['routes'] != null) {
         final routes = vrpResult['routes'] as List;
         _totalDistanceKm = (vrpResult['distance_totale_km'] as num?)?.toDouble();
@@ -1629,45 +1707,20 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
         for (final routeObj in routes) {
           final vrpIds = (routeObj['route'] as List?) ?? [];
-          _log('  route ids: $vrpIds');
           for (final vid in vrpIds) {
             final key = vid.toString();
             if (commandeById.containsKey(key)) {
               orderedMongoIds.add(key);
-            } else {
-              _log('  WARNING: id $key not found — skipped');
             }
           }
         }
 
-        // Debug diff
-        final allVrpIds   = <String>{};
-        for (final routeObj in routes) {
-          for (final vid in (routeObj['route'] as List?) ?? []) {
-            allVrpIds.add(vid.toString());
-          }
-        }
-        final commandeKeys = commandeById.keys.toSet();
-        _log('🔍 VRP↔commandeById diff:');
-        _log('  VRP returned ids    : $allVrpIds');
-        _log('  commandeById keys   : $commandeKeys');
-        _log('  ✅ matched          : ${allVrpIds.intersection(commandeKeys)}');
-        _log('  ❌ VRP ids not found: ${allVrpIds.difference(commandeKeys)}');
-        _log('  ⚠️ commandes unused : ${commandeKeys.difference(allVrpIds)}');
-
         if (orderedMongoIds.isNotEmpty) {
           usedVrp = true;
-          _log('UNIFIED MODE: ✅ VRP order used — ${orderedMongoIds.length} stops');
-          _log('  Order: $orderedMongoIds');
-        } else {
-          _log('UNIFIED MODE: ⚠️ VRP produced 0 valid mongoIds → NN fallback');
         }
-      } else {
-        _log('UNIFIED MODE: ⚠️ VRP error or null routes → NN fallback');
-        if (vrpResult['error'] != null) _log('  VRP error: ${vrpResult['error']}');
       }
-
-      // ── 2. Populate _stopChauffeur ───────────────────────────────
+      _stopChauffeur.clear();
+      // Populate _stopChauffeur
       if (vrpResult['error'] == null && vrpResult['routes'] != null) {
         final routes = vrpResult['routes'] as List;
         for (int r = 0; r < routes.length; r++) {
@@ -1680,10 +1733,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             _stopChauffeur[vid.toString()] = nomChauffeur;
           }
         }
-        _log('>>> _stopChauffeur populated: $_stopChauffeur');
       }
 
-      // ── 3. NN fallback if VRP failed ─────────────────────────────
       if (!usedVrp) {
         _totalDistanceKm = null;
         _routeIsValid    = false;
@@ -1691,10 +1742,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         final flatList = commandeById.entries.map((e) {
           final lat = (e.value['position']?['lat'] as num?)?.toDouble();
           final lon = (e.value['position']?['lon'] as num?)?.toDouble();
-          if (lat == null || lon == null) {
-            _log('  WARNING: commande ${e.key} has null position — excluded');
-            return null;
-          }
+          if (lat == null || lon == null) return null;
           final raw        = e.value['client'];
           final clientName = (raw is Map)
               ? '${raw['prenom'] ?? ''} ${raw['nom'] ?? ''}'.trim()
@@ -1704,35 +1752,25 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           };
         }).whereType<Map<String, dynamic>>().toList();
 
-        _log('UNIFIED MODE: NN input: ${flatList.length} valid positions');
         final sorted    = _nearestNeighbourSort(_currentPosition, flatList);
         orderedMongoIds = sorted.map((o) => o['_mongoId'].toString()).toList();
-        _log('UNIFIED MODE: NN order: $orderedMongoIds');
       }
 
-      // ── 4. Build stops list ──────────────────────────────────────
       final List<LatLng>     waypoints = [_currentPosition];
       final List<_RouteStop> stops     = [];
 
       for (int i = 0; i < orderedMongoIds.length; i++) {
         final id  = orderedMongoIds[i];
         final cmd = commandeById[id];
-        if (cmd == null) {
-          _log('  WARNING: mongoId $id not in commandeById — skipped');
-          continue;
-        }
+        if (cmd == null) continue;
         final lat = (cmd['position']?['lat'] as num?)?.toDouble();
         final lon = (cmd['position']?['lon'] as num?)?.toDouble();
-        if (lat == null || lon == null) {
-          _log('  WARNING: commande $id has null position — skipped');
-          continue;
-        }
+        if (lat == null || lon == null) continue;
         final raw        = cmd['client'];
         final clientName = (raw is Map)
             ? '${raw['prenom'] ?? ''} ${raw['nom'] ?? ''}'.trim()
             : 'Client ${i + 1}';
 
-        _log('  stop ${i + 1}: ${clientName.isEmpty ? id : clientName}  ($lat, $lon)');
         waypoints.add(LatLng(lat, lon));
         stops.add(_RouteStop(
           index:      i + 1,
@@ -1741,11 +1779,11 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           position:   LatLng(lat, lon),
           address:    cmd['adresse'] ?? cmd['address'] ?? '',
           quantity:   (cmd['capacite'] as num?)?.toDouble() ?? 0,
+          driverPhone:   cmd['telephone'] ?? cmd['telephone'] ?? '',
         ));
       }
 
       if (stops.isEmpty) {
-        _log('UNIFIED MODE: no valid stops after filtering — clearing map');
         setState(() {
           _polylines       = [];
           _markers         = [];
@@ -1757,16 +1795,12 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         return;
       }
 
-      // ── 5. OSRM legs — per chauffeur ─────────────────────────────
-      _log('UNIFIED MODE: OSRM per chauffeur...');
-
       final colorOptions = [
         const Color(0xFF1565C0), Colors.green.shade700,
         Colors.orange.shade700,  Colors.purple.shade700,
         Colors.red.shade700,     Colors.teal.shade700,
       ];
 
-// Build chauffeur → stops mapping
       final Map<String, List<_RouteStop>> stopsByChauffeur = {};
       for (final stop in stops) {
         final nom = _stopChauffeur[stop.mongoId] ?? 'default';
@@ -1780,21 +1814,25 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       final List<double>     legDurations   = [];
       int                    colorIdx       = 0;
 
+      // FIX: reset _routePointsByChauffeur before rebuilding
+      _routePointsByChauffeur = {};
+
       for (final entry in stopsByChauffeur.entries) {
         final nom         = entry.key;
         final chauffStops = entry.value;
 
-        // Get chauffeur start position
         final chauffeurData = _testChauffeurs.firstWhere(
               (c) => c['nom'].toString() == nom,
           orElse: () => <String, Object>{},
         );
-        final double startLat = (chauffeurData['lat'] as num?)?.toDouble()
-            ?? _currentPosition.latitude;
-        final double startLon = (chauffeurData['lon'] as num?)?.toDouble()
-            ?? _currentPosition.longitude;
+        final double startLat = _testOrders.isEmpty
+            ? _currentPosition.latitude
+            : (chauffeurData['lat'] as num?)?.toDouble() ?? _currentPosition.latitude;
+        final double startLon = _testOrders.isEmpty
+            ? _currentPosition.longitude
+            : (chauffeurData['lon'] as num?)?.toDouble() ?? _currentPosition.longitude;
 
-        final List<LatLng> waypoints = [
+        final List<LatLng> chWaypoints = [
           LatLng(startLat, startLon),
           ...chauffStops.map((s) => s.position),
         ];
@@ -1802,15 +1840,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         final List<LatLng> routePoints = [];
         double routeDist = 0;
 
-        for (int i = 0; i < waypoints.length - 1; i++) {
+        for (int i = 0; i < chWaypoints.length - 1; i++) {
           try {
             final result = await OsrmService.getRouteWithMetrics(
-                waypoints[i], waypoints[i + 1]);
+                chWaypoints[i], chWaypoints[i + 1]);
             final pts = result['points'] as List<LatLng>;
             final d   = result['distanceKm']  as double? ?? 0;
             final dur = result['durationMin'] as double? ?? 0;
-
-            _log('  leg $i→${i+1} ($nom): ${d.toStringAsFixed(2)} km');
 
             if (routePoints.isNotEmpty && pts.isNotEmpty) {
               routePoints.addAll(pts.skip(1));
@@ -1842,22 +1878,20 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ));
         }
 
+        // FIX: store per-chauffeur route ONCE, not twice
+        _routePointsByChauffeur[nom] = List<LatLng>.from(routePoints);
         fullRoutePoints.addAll(routePoints);
         segmentDistKm += routeDist;
         colorIdx++;
       }
 
-      // ── 6. Enrich stops with distances ───────────────────────────
-// ── 6. Enrich stops with distances ───────────────────────────
-// Build a map of mongoId → (distance, duration) from per-chauffeur legs
+      // Enrich stops with distances
       final Map<String, double> stopDistanceMap = {};
       final Map<String, double> stopDurationMap = {};
 
       int legIdx = 0;
       for (final entry in stopsByChauffeur.entries) {
         final chauffStops = entry.value;
-        // skip first leg (chauffeur → first stop) — that's leg 0 for this chauffeur
-        // legs are: [chauffeur→stop0, stop0→stop1, stop1→stop2, ...]
         for (int s = 0; s < chauffStops.length; s++) {
           if (legIdx < legDistances.length) {
             stopDistanceMap[chauffStops[s].mongoId] = legDistances[legIdx];
@@ -1874,26 +1908,35 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         );
       }).toList();
 
-
-      // ── 7. Init orderStatus for new stops ────────────────────────
+      // FIX: init orderStatus — keep existing status if already set, else 'pending'
       final enrichedIds = enrichedStops.map((s) => s.mongoId).toSet();
       _orderStatus.removeWhere((id, _) => !enrichedIds.contains(id));
       for (final s in enrichedStops) {
         _orderStatus.putIfAbsent(s.mongoId, () => 'pending');
       }
 
-      // ── 9. setState ───────────────────────────────────────────────
+      // For real orders (no test orders), auto-accept
+      if (_testOrders.isEmpty) {
+        for (final s in enrichedStops) {
+          _orderStatus[s.mongoId] = 'accepted';
+        }
+      }
+      if (_testOrders.isEmpty) {
+        for (final s in enrichedStops) {
+          _stopChauffeur[s.mongoId] = _myName;
+        }
+      }
+
       setState(() {
         _polylines       = newPolylines;
         _markers         = _buildMarkers(enrichedStops);
         _optimizedStops  = enrichedStops;
         _allStops        = enrichedStops;
-        _totalDistanceKm = _totalDistanceKm ?? segmentDistKm;
+        _totalDistanceKm = segmentDistKm;
         _fullRoutePoints = List<LatLng>.from(fullRoutePoints);
         _loadingRoutes   = false;
       });
 
-      // ── 10. Fit map bounds ────────────────────────────────────────
       if (waypoints.length > 1) {
         final bounds = LatLngBounds.fromPoints(waypoints);
         _mapController.fitBounds(
@@ -1904,19 +1947,14 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       }
 
     } catch (e, st) {
-      _log('UNIFIED MODE ERROR: $e');
-      _log('  $st');
+      _log('UNIFIED MODE ERROR: $e\n$st');
       if (!mounted) return;
       setState(() => _loadingRoutes = false);
       _showSnack('Erreur lors du chargement des itinéraires', Colors.red);
     }
   }
 
-  // ─────────────────────────────────────────────────────────
-  // SHARED MARKER BUILDER
-  // ─────────────────────────────────────────────────────────
   List<Marker> _buildMarkers(List<_RouteStop> stops) {
-    // ── Build chauffeur → color mapping ──────────────────────
     final colorOptions = [
       Colors.blue, Colors.green, Colors.purple,
       Colors.orange, Colors.teal, Colors.red,
@@ -1927,31 +1965,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       colorOptions[i % colorOptions.length];
     }
 
-    final List<Marker> markers = [
-      Marker(
-        point:  _currentPosition,
-        width:  56,
-        height: 56,
-        child: GestureDetector(
-          onTap: _showEditCapacityDialog,
-          child: Container(
-            decoration: BoxDecoration(
-              color:  const Color(0xFF1E3A8A),
-              shape:  BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 3),
-              boxShadow: const [
-                BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3)),
-              ],
-            ),
-            child: const Icon(Icons.local_shipping, color: Colors.white, size: 28),
-          ),
-        ),
-      ),
-    ];
+    final List<Marker> markers = [];
 
-    // ── Stop markers (colored by assigned chauffeur) ──────────
     for (int i = 0; i < stops.length; i++) {
-      final stop             = stops[i];
+      final stop              = stops[i];
       final assignedChauffeur = _stopChauffeur[stop.mongoId];
       final color = assignedChauffeur != null && chauffeurColors.containsKey(assignedChauffeur)
           ? chauffeurColors[assignedChauffeur]!
@@ -1990,7 +2007,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       ));
     }
 
-    // ── Chauffeur markers (same color as their stops) ─────────
     for (final c in _testChauffeurs) {
       final nom = c['nom'].toString();
       final lat = (c['lat'] as num?)?.toDouble();
@@ -2041,24 +2057,26 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
     return markers;
   }
-  // ─────────────────────────────────────────────────────────
-  // CAPACITY
-  // ─────────────────────────────────────────────────────────
 
   Future<void> _loadCapacity() async {
     setState(() => _loadingCapacity = true);
     try {
       final info     = await ApiService.getMyInfo();
-      final quantite =
-          (info['fournisseurInfo']?['quantiteEau'] as num?)?.toDouble() ?? 0.0;
+      final quantite = (info['fournisseurInfo']?['quantiteEau'] as num?)?.toDouble() ?? 0.0;
+      final prenom   = info['prenom']?.toString() ?? '';
+      final nom      = info['nom']?.toString()    ?? '';
+      final fullName = '$prenom $nom'.trim();
       if (!mounted) return;
-      setState(() { _capacityLiters = quantite; _loadingCapacity = false; });
+      setState(() {
+        _capacityLiters = quantite;
+        _loadingCapacity = false;
+        if (fullName.isNotEmpty) _myName = fullName;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() { _capacityLiters = 0; _loadingCapacity = false; });
     }
   }
-
   Future<void> _showEditCapacityDialog() async {
     _capacityController.text = _capacityLiters.toStringAsFixed(0);
     final result = await showDialog<double>(
@@ -2114,10 +2132,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     ));
   }
 
-  // ─────────────────────────────────────────────────────────
-  // MAP SCREEN
-  // ─────────────────────────────────────────────────────────
-
   Widget _buildMapScreen() {
     return Stack(
       children: [
@@ -2131,57 +2145,23 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ),
           children: [
             TileLayer(
-              urlTemplate:
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               userAgentPackageName: 'com.example.water_delivery_app',
             ),
             if (_polylines.isNotEmpty)
               PolylineLayer(polylines: _polylines),
-            MarkerLayer(
-              markers: [
-                if (_gpsReady && _simPosition == null)
-                  Marker(
-                    point:  _currentPosition,
-                    width:  18,
-                    height: 18,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color:  Colors.blue.withOpacity(0.25),
-                        shape:  BoxShape.circle,
-                        border: Border.all(color: Colors.blue, width: 2),
-                      ),
-                    ),
-                  ),
-                ..._markers,
-                if (_simPosition != null)
-                  Marker(
-                    point:  _simPosition!,
-                    width:  56,
-                    height: 56,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color:  Colors.orange,
-                        shape:  BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 3),
-                        boxShadow: const [
-                          BoxShadow(
-                            color:      Colors.black38,
-                            blurRadius: 10,
-                            offset:     Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(Icons.local_shipping,
-                          color: Colors.white, size: 26),
-                    ),
-                  ),
-              ],
+            MarkerLayer(markers: _markers),
+            _SimMarkerLayer(
+              position: (_simRunning || _simStarted) && _simPosition != null
+                  ? _simPosition!
+                  : _currentPosition,
+              onTap: _showEditCapacityDialog,
             ),
             if (_showHeatmap && _optimizedStops.isNotEmpty)
               MarkerLayer(
                 markers: _optimizedStops.map((stop) => Marker(
-                  point: stop.position,
-                  width: 80,
+                  point:  stop.position,
+                  width:  80,
                   height: 80,
                   child: _HeatmapDot(
                     intensity: stop.quantity > 0
@@ -2190,12 +2170,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                   ),
                 )).toList(),
               ),
-
-
           ],
         ),
 
-        // Top bar
         Positioned(
           top: 0, left: 0, right: 0,
           child: Container(
@@ -2234,8 +2211,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                         _loadingCapacity
                             ? const SizedBox(
                             width: 16, height: 16,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2))
+                            child: CircularProgressIndicator(strokeWidth: 2))
                             : Text(
                             '${_capacityLiters.toStringAsFixed(0)} L',
                             style: const TextStyle(
@@ -2263,12 +2239,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       child: _loadingRoutes
                           ? const SizedBox(
                           width: 20, height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2))
+                          child: CircularProgressIndicator(strokeWidth: 2))
                           : Icon(Icons.gps_fixed,
-                          color: _gpsReady
-                              ? Colors.green
-                              : Colors.grey,
+                          color: _gpsReady ? Colors.green : Colors.grey,
                           size: 20),
                     ),
                     const SizedBox(width: 8),
@@ -2282,12 +2255,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                               ? const Color(0xFF1E3A8A)
                               : Colors.white,
                           borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color:      Colors.black.withOpacity(0.1),
-                              blurRadius: 8,
-                            ),
-                          ],
+                          boxShadow: [BoxShadow(
+                            color:      Colors.black.withOpacity(0.1),
+                            blurRadius: 8,
+                          )],
                         ),
                         child: Icon(
                           Icons.local_fire_department,
@@ -2305,7 +2276,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ),
         ),
 
-        // FABs
         Positioned(
           right: 16,
           top:   MediaQuery.of(context).padding.top + 100,
@@ -2313,10 +2283,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             mini:            true,
             heroTag:         'locate',
             backgroundColor: Colors.white,
-            onPressed: () =>
-                _mapController.move(_currentPosition, 14.0),
-            child: const Icon(Icons.my_location,
-                color: Color(0xFF1E3A8A)),
+            onPressed: () => _mapController.move(_currentPosition, 14.0),
+            child: const Icon(Icons.my_location, color: Color(0xFF1E3A8A)),
           ),
         ),
         Positioned(
@@ -2328,17 +2296,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             backgroundColor: Colors.white,
             onPressed:       isOnline ? _loadOptimizedRoutes : null,
             child: Icon(Icons.refresh,
-                color: isOnline
-                    ? const Color(0xFF1E3A8A)
-                    : Colors.grey),
+                color: isOnline ? const Color(0xFF1E3A8A) : Colors.grey),
           ),
         ),
 
         if (isOnline && _optimizedStops.isNotEmpty)
           Positioned(
-            bottom: 20,
-            left:   0,
-            right:  0,
+            bottom: 20, left: 0, right: 0,
             child: _buildRouteSummaryPanel(),
           )
         else
@@ -2350,22 +2314,22 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────
-  // Route summary panel (with simulation controls)
-  // ─────────────────────────────────────────────────────────
   Widget _buildRouteSummaryPanel() {
-    // ✅ CHANGED: show different header when route is a preview
     final headerTitle = _isPreviewRoute
         ? '📍 Aperçu — acceptez les commandes pour démarrer'
         : (_routeIsValid ? 'Itinéraire optimisé ✓' : 'Itinéraire (non validé)');
     final headerColor = _isPreviewRoute
-        ? const Color(0xFF455A64)   // grey-blue for preview
-        : const Color(0xFF1E3A8A);  // dark blue for active
+        ? const Color(0xFF455A64)
+        : const Color(0xFF1E3A8A);
+
+    // FIX: count pending orders for the badge
+    final pendingCount = _orderStatus.values.where((v) => v == 'pending').length;
+
     return ConstrainedBox(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 1, // ← max 45% of screen
+        maxHeight: MediaQuery.of(context).size.height * 1,
       ),
-      child:  Container(
+      child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
           color:        Colors.white,
@@ -2379,14 +2343,11 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
 
-            // Header
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 1, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 8),
               decoration: BoxDecoration(
                 color:        headerColor,
-                borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(20)),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               ),
               child: Column(
                 children: [
@@ -2406,9 +2367,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                           children: [
                             const Icon(Icons.checklist_rtl, color: Colors.white, size: 14),
                             const SizedBox(width: 4),
+                            // FIX: show real pending count
                             Text(
-                              _orderStatus.values.where((v) => v == 'count').isNotEmpty
-                                  ? '${_orderStatus.values.where((v) => v == "count").length} en attente'
+                              pendingCount > 0
+                                  ? '$pendingCount en attente'
                                   : 'Commandes',
                               style: const TextStyle(
                                   color: Colors.white,
@@ -2466,6 +2428,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                             _markers         = [];
                             _totalDistanceKm = null;
                             _testOrders      = [];
+                            _realOrders      = [];
                             _fullRoutePoints = [];
                             _isPreviewRoute  = false;
                           });
@@ -2487,23 +2450,62 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                           ),
                         ),
                       ),
+
                     ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(2),
+                      boxShadow: [BoxShadow(
+                          color:      Colors.black.withOpacity(0.15),
+                          blurRadius: 20,
+                          offset:     const Offset(0, 4))],
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+
+                        GestureDetector(
+                          onTap: _toggleOnlineStatus,
+                          child: Container(
+                            width: 25, height: 25,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isOnline ? Colors.red : const Color(0xFF1E3A8A),
+                              boxShadow: [BoxShadow(
+                                color: (isOnline ? Colors.red : const Color(0xFF1E3A8A))
+                                    .withOpacity(0.4),
+                                blurRadius:   15,
+                                spreadRadius: 2,
+                              )],
+                            ),
+                            child: Center(
+                              child: Text(
+                                isOnline ? 'STOP' : 'GO',
+                                style: const TextStyle(
+                                  color:      Colors.white,
+                                  fontSize:   6,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
-
             ),
-
 
             if (!_isPreviewRoute)
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
                   color: Colors.orange.shade50,
                   border: Border(
-                    bottom: BorderSide(
-                        color: Colors.orange.shade100, width: 1),
+                    bottom: BorderSide(color: Colors.orange.shade100, width: 1),
                   ),
                 ),
                 child: Row(
@@ -2527,8 +2529,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                         child: LinearProgressIndicator(
                           value: _fullRoutePoints.isEmpty
                               ? 0
-                              : _simIndex /
-                              (_fullRoutePoints.length - 1),
+                              : _simIndex / (_fullRoutePoints.length - 1),
                           color:           Colors.orange,
                           backgroundColor: Colors.orange.shade100,
                           minHeight:       4,
@@ -2564,11 +2565,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 ),
               ),
 
-            // ✅ CHANGED: in preview mode show a "go accept orders" CTA
             if (_isPreviewRoute)
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: Colors.blue.shade50,
                   border: Border(
@@ -2576,30 +2575,26 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                   ),
                 ),
                 child: Row(children: [
-                  Icon(Icons.info_outline,
-                      color: Colors.blue.shade400, size: 16),
-                  const SizedBox(width: 6),
+                  Icon(Icons.info_outline, color: Colors.blue.shade400, size: 16),
+                  const SizedBox(width: 1),
                   Expanded(
                     child: Text(
                       'Rendez-vous sur "Commandes" pour accepter ou refuser chaque livraison',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.blue.shade700),
+                      style: TextStyle(fontSize: 11, color: Colors.blue.shade700),
                     ),
                   ),
-
                 ]),
               ),
 
-
-            // ── Chauffeur summary button ──────────────────────────────
-            if (_testChauffeurs.isNotEmpty && _stopChauffeur.isNotEmpty)
+            // FIX: show chauffeur summary button ALWAYS when chauffeurs exist
+            // (not just when _stopChauffeur is non-empty, as it may be set after)
+            if (_testChauffeurs.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                padding: const EdgeInsets.fromLTRB(10, 4, 11, 4),
                 child: GestureDetector(
                   onTap: _showChauffeurSummarySheet,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
                     decoration: BoxDecoration(
                       color: const Color(0xFF1E3A8A).withOpacity(0.08),
                       borderRadius: BorderRadius.circular(12),
@@ -2607,31 +2602,29 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     ),
                     child: Row(children: [
                       const Icon(Icons.people, color: Color(0xFF1E3A8A), size: 16),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 1),
                       Text(
-                        '${_testChauffeurs.length} chauffeurs — voir détails',
+                        '${_testChauffeurs.length} chauffeurs — voir détails & simuler',
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: 11,
                           color: Color(0xFF1E3A8A),
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const Spacer(),
-                      const Icon(Icons.chevron_right, color: Color(0xFF1E3A8A), size: 16),
+                      const Icon(Icons.chevron_right, color: Color(0xFF1E3A8A), size: 13),
                     ]),
                   ),
                 ),
               ),
 
-            // Stop list
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 100),
               child: ListView.separated(
                 shrinkWrap:  true,
                 padding:     const EdgeInsets.symmetric(vertical: 10),
                 itemCount:   _optimizedStops.length,
-                separatorBuilder: (_, __) =>
-                const Divider(height: 1, indent: 56),
+                separatorBuilder: (_, __) => const Divider(height: 1, indent: 56),
                 itemBuilder: (_, i) {
                   final stop  = _optimizedStops[i];
                   final color = [
@@ -2686,8 +2679,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       ],
                     )
                         : null,
-                    onTap: () =>
-                        _mapController.move(stop.position, 15),
+                    onTap: () => _mapController.move(stop.position, 15),
                   );
                 },
               ),
@@ -2720,9 +2712,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    isOnline
-                        ? 'VOUS ÊTES EN LIGNE'
-                        : 'VOUS ÊTES HORS LIGNE',
+                    isOnline ? 'VOUS ÊTES EN LIGNE' : 'VOUS ÊTES HORS LIGNE',
                     style: TextStyle(
                       fontSize:   20,
                       fontWeight: FontWeight.bold,
@@ -2734,8 +2724,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     isOnline
                         ? 'En attente de commandes.'
                         : 'Vous ne recevez pas de commandes.',
-                    style: TextStyle(
-                        fontSize: 14, color: Colors.grey[600]),
+                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                   ),
                 ],
               ),
@@ -2772,10 +2761,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────
-  // BUILD
-  // ─────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2810,13 +2795,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
               ),
             ),
           Expanded(
-            child: IndexedStack(
-              index: currentIndex,
+            child: Stack(
               children: [
                 _buildMapScreen(),
-                const OrdersScreen(),
-                const HistoryScreen(),
-                const ProfileScreen(),
+                if (currentIndex == 1) OrdersScreen(  ApiService.getPendingCommandes(),
+                ),
+                if (currentIndex == 2) const HistoryScreen(),
+                if (currentIndex == 3) const ProfileScreen(),
               ],
             ),
           ),
@@ -2830,23 +2815,16 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         selectedItemColor:   Colors.white,
         unselectedItemColor: Colors.white60,
         items: const [
-          BottomNavigationBarItem(
-              icon: Icon(Icons.map),      label: 'Carte'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.list_alt), label: 'Commandes'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.history),  label: 'Historique'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.person),   label: 'Profil'),
+          BottomNavigationBarItem(icon: Icon(Icons.map),      label: 'Carte'),
+          BottomNavigationBarItem(icon: Icon(Icons.list_alt), label: 'Commandes'),
+          BottomNavigationBarItem(icon: Icon(Icons.history),  label: 'Historique'),
+          BottomNavigationBarItem(icon: Icon(Icons.person),   label: 'Profil'),
         ],
       ),
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────
-// Small reusable simulation button
-// ─────────────────────────────────────────────────────────
 class _SimButton extends StatelessWidget {
   final IconData     icon;
   final Color        color;
@@ -2891,9 +2869,6 @@ class _SimButton extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────
-// Data model for a route stop
-// ─────────────────────────────────────────────────────────
 class _RouteStop {
   final int     index;
   final String  mongoId;
@@ -2903,6 +2878,7 @@ class _RouteStop {
   final double  quantity;
   final double? distanceKm;
   final double? durationMin;
+  final String driverPhone;
 
   const _RouteStop({
     required this.index,
@@ -2910,6 +2886,7 @@ class _RouteStop {
     required this.clientName,
     required this.position,
     required this.address,
+    required this.driverPhone,
     required this.quantity,
     this.distanceKm,
     this.durationMin,
@@ -2923,20 +2900,20 @@ class _RouteStop {
       position:    position,
       address:     address,
       quantity:    quantity,
+      driverPhone: driverPhone,
       distanceKm:  distanceKm  ?? this.distanceKm,
       durationMin: durationMin ?? this.durationMin,
     );
   }
-
 }
+
 class _HeatmapDot extends StatelessWidget {
-  final double intensity; // 0.0 → 1.0
+  final double intensity;
 
   const _HeatmapDot({required this.intensity});
 
   @override
   Widget build(BuildContext context) {
-    // Interpolate colour: blue → green → yellow → red
     final Color color;
     if (intensity < 0.33) {
       color = Color.lerp(Colors.blue, Colors.green, intensity / 0.33)!;
@@ -2946,9 +2923,7 @@ class _HeatmapDot extends StatelessWidget {
       color = Color.lerp(Colors.yellow, Colors.red, (intensity - 0.66) / 0.34)!;
     }
 
-    return CustomPaint(
-      painter: _HeatmapPainter(color: color),
-    );
+    return CustomPaint(painter: _HeatmapPainter(color: color));
   }
 }
 
@@ -2961,30 +2936,52 @@ class _HeatmapPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
 
-    // Outer glow (low opacity)
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()
-        ..color = color.withOpacity(0.08)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18),
-    );
-    // Mid ring
-    canvas.drawCircle(
-      center,
-      radius * 0.65,
-      Paint()
-        ..color = color.withOpacity(0.18)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-    );
-    // Core dot
-    canvas.drawCircle(
-      center,
-      radius * 0.28,
-      Paint()..color = color.withOpacity(0.6),
-    );
+    canvas.drawCircle(center, radius,
+        Paint()
+          ..color = color.withOpacity(0.08)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
+    canvas.drawCircle(center, radius * 0.65,
+        Paint()
+          ..color = color.withOpacity(0.18)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+    canvas.drawCircle(center, radius * 0.28,
+        Paint()..color = color.withOpacity(0.6));
   }
 
   @override
   bool shouldRepaint(_HeatmapPainter old) => old.color != color;
+}
+
+class _SimMarkerLayer extends StatelessWidget {
+  final LatLng       position;
+  final VoidCallback onTap;
+
+  const _SimMarkerLayer({required this.position, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return MarkerLayer(
+      markers: [
+        Marker(
+          point:  position,
+          width:  56,
+          height: 56,
+          child: GestureDetector(
+            onTap: onTap,
+            child: Container(
+              decoration: BoxDecoration(
+                color:  const Color(0xFF1E3A8A),
+                shape:  BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 3),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3)),
+                ],
+              ),
+              child: const Icon(Icons.local_shipping, color: Colors.white, size: 28),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }

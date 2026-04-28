@@ -33,6 +33,7 @@ class _CommandesState extends State<commandes> {
   bool _gettingLocation = false;
   double? _selectedLat;
   double? _selectedLon;
+ String? driverPhone;
   List<_Fournisseur> _fournisseurs = [];
   bool _loadingFourn = false;
   String? _fournError;
@@ -353,6 +354,8 @@ class _CommandesState extends State<commandes> {
       if (mounted && result['error'] == null) {
         final clientInfo = await ApiService.getClientInfo();
         final clientNom = '${clientInfo['prenom'] ?? ''} ${clientInfo['nom'] ?? ''}'.trim();
+        final driverPhone = '${clientInfo['telephone'] ?? ''} '.trim();
+
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -362,6 +365,8 @@ class _CommandesState extends State<commandes> {
               clientNom:   clientNom.isNotEmpty ? clientNom : 'Client',
               volumeLivre: double.tryParse(selectedVolume!.replaceAll('L', '')) ?? 0.0,
               adresse:     selectedPosition!,
+              driverPhone:   driverPhone.isNotEmpty ? driverPhone : 'telephone',
+
             ),
           ),
         );

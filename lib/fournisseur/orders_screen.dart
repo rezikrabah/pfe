@@ -5,7 +5,7 @@ import '../services/api_service.dart';
 import 'dart:async';
 class OrdersScreen extends StatefulWidget {
   final VoidCallback? onOrdersRegenerated;
-  const OrdersScreen({Key? key, this.onOrdersRegenerated}) : super(key: key);
+  const OrdersScreen(Future<List<dynamic>> pendingCommandes, {Key? key, this.onOrdersRegenerated}) : super(key: key);
 
 
   @override
@@ -83,65 +83,96 @@ class _OrdersScreenState extends State<OrdersScreen> {
     super.initState();
     _loadPending();
     // Poll every 5 seconds
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _loadPending());
+    _timer = Timer.periodic(const Duration(seconds: 20), (_) => _loadPending());
   }
   @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
   }
-
+  DateTime? _lastPendingFetch;
   Future<void> _loadPending() async {
-    final result = await ApiService.getPendingCommandes();
-    if (!mounted) return;
-    setState(() {
-      // Map the API response to the same format orders expects
-      final newOrders = result.map<Map<String, dynamic>>((e) {
-        final id       = (e['_id'] ?? e['id'] ?? '').toString();
-        final capacite = (e['capacite'] as num?)?.toDouble() ?? 0.0;
-        final prix     = (e['prix'] as num?)?.toDouble() ?? 0.0;
-        final rawStatus = (e['status'] ?? 'en attente').toString();
+    final now = DateTime.now();
+    if (_lastPendingFetch != null &&
+        now.difference(_lastPendingFetch!) < const Duration(seconds: 18)) {
+      return;
+    }
+    _lastPendingFetch = now;
 
-        final client = e['client'];
-        String clientName = 'Client';
-        if (client is Map) {
-          final nom    = client['nom']    ?? '';
-          final prenom = client['prenom'] ?? '';
-          clientName   = '$nom $prenom'.trim();
-          if (clientName.isEmpty) clientName = client['email'] ?? 'Client';
+    try {
+      final result = await ApiService.getPendingCommandes();
+      if (!mounted) return;
+
+      // Add debug log so you can see what's coming back
+      debugPrint('[ORDERS] getPendingCommandes returned ${result.length} items');
+      for (final e in result) {
+        debugPrint('  → id=${e['_id'] ?? e['id']}  status=${e['status']}  client=${e['client']}');
+      }
+
+      if (result.isEmpty) return;
+
+      setState(() {
+        for (final e in result) {
+          final id = (e['_id'] ?? e['id'] ?? '').toString();
+
+          // Skip if already exists with a non-pending status (accepted/refused)
+          final existing = orders.firstWhere(
+                (o) => o['id'] == id,
+            orElse: () => {},
+          );
+          if (existing.isNotEmpty && existing['status'] != 'pending') continue;
+
+          final capacite  = (e['capacite'] as num?)?.toDouble() ?? 0.0;
+          final prix      = (e['prix'] as num?)?.toDouble() ?? 0.0;
+          final rawStatus = (e['status'] ?? 'en attente').toString();
+          final client    = e['client'];
+
+          String clientName = 'Client';
+          if (client is Map) {
+            final nom    = client['nom']    ?? '';
+            final prenom = client['prenom'] ?? '';
+            clientName   = '$nom $prenom'.trim();
+            if (clientName.isEmpty) clientName = client['email'] ?? 'Client';
+          }
+
+          final posMap      = e['position'];
+          final double? lat = (posMap?['lat'] as num?)?.toDouble();
+          final double? lon = (posMap?['lon'] as num?)?.toDouble();
+
+          final newOrder = {
+            'id':         id,
+            'clientName': clientName,
+            'address':    e['adresse'] ?? e['address'] ?? e['wilaya'] ?? 'Adresse non renseignée',
+            'quantity':   capacite,
+            'price':      prix > 0 ? prix : capacite * 2,
+            'distance':   0.0,
+            'duration':   0,
+            'status':     'pending',
+            'rawStatus':  rawStatus,
+            'lat':        lat,
+            'lon':        lon,
+          };
+
+          if (existing.isEmpty) {
+            // Brand new order — add it
+            orders = [...orders, newOrder];
+          } else {
+            // Exists as pending — update it in place
+            final idx = orders.indexWhere((o) => o['id'] == id);
+            if (idx != -1) orders[idx] = newOrder;
+          }
         }
-
-        final posMap      = e['position'];
-        final double? lat = (posMap?['lat'] as num?)?.toDouble();
-        final double? lon = (posMap?['lon'] as num?)?.toDouble();
-
-        return {
-          'id':         id,
-          'clientName': clientName,
-          'address':    e['adresse'] ?? e['address'] ?? (e['wilaya'] ?? 'Adresse non renseignée'),
-          'quantity':   capacite,
-          'price':      prix > 0 ? prix : capacite * 2,
-          'distance':   0.0,
-          'duration':   0,
-          'status':     'pending',
-          'rawStatus':  rawStatus,
-          'lat':        lat,
-          'lon':        lon,
-        };
-      }).toList();
-
-      // Only add orders not already in the list (avoid duplicates)
-      final existingIds = orders.map((o) => o['id']).toSet();
-      final toAdd = newOrders.where((o) => !existingIds.contains(o['id'])).toList();
-      orders = [...orders, ...toAdd];
-    });
+      });
+    } catch (e) {
+      debugPrint('[ORDERS] _loadPending error: $e');
+    }
   }
 
   // ── GENERATE random orders ────────────────────────────────────
   void _generateRandomOrders() {
     final int nbChauffeurs = 5 + Random().nextInt(3); // 5–7 fake drivers
     final rng   = Random();
-    final count = 20 + rng.nextInt(11); // 20–30 orders
+    final count = 60 + rng.nextInt(11); // 20–30 orders
     final newOrders = <Map<String, dynamic>>[];
 
     final existing = orders.where((o) => o['status'] != 'pending').toList();
@@ -156,7 +187,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       final latJitter = (rng.nextDouble() - 0.5) * 0.02;
       final lonJitter = (rng.nextDouble() - 0.5) * 0.02;
 
-      final quantity = (100 + rng.nextInt(1901)).toDouble();
+      final quantity = (200 + rng.nextInt(801)).toDouble(); // 200–1000L, more varied
       final distance = double.parse(
           (1.0 + rng.nextDouble() * 29).toStringAsFixed(1));
       final duration = (distance * 3).round() + rng.nextInt(10);
@@ -173,6 +204,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
         'rawStatus':  'en attente',
         'lat':        (city['lat'] as double) + latJitter,
         'lon':        (city['lon'] as double) + lonJitter,
+        'demand':   quantity,
+        'gain':     quantity * 2,
       });
     }
 
@@ -185,7 +218,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('✅ ${newOrders.length} commandes générées — optimisation en cours...'),
       backgroundColor: const Color(0xFF1E3A8A),
-      duration: const Duration(seconds: 2),
+      duration: const Duration(seconds: 6),
     ));
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -265,7 +298,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('✅ ${pending.length} commandes acceptées'),
         backgroundColor: Colors.green,
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 5),
       ));
 
       // Recompute route for all accepted orders, then switch to map tab
@@ -303,7 +336,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   // ── REAL load from backend ────────────────────────────────────
   Future<void> _loadOrders() async {
     if (_lastFetch != null &&
-        DateTime.now().difference(_lastFetch!) < const Duration(seconds: 10)) {
+        DateTime.now().difference(_lastFetch!) < const Duration(seconds: 15)) {
       return;
     }
     _lastFetch = DateTime.now();
@@ -393,15 +426,29 @@ class _OrdersScreenState extends State<OrdersScreen> {
         if (idx != -1) {
           orders[idx]['status']    = 'accepted';
           orders[idx]['rawStatus'] = 'en livraison';
+
         }
       });
-
+      // Replace your updateWaterQuantity call in BOTH modes with this:
+      final order = orders.firstWhere((o) => o['id'] == orderId, orElse: () => {});
+      if (order.isNotEmpty) {
+        final quantity = (order['quantity'] as num?)?.toDouble() ?? 0.0;
+        try {
+          final info    = await ApiService.getMyInfo();
+          final current = (info['fournisseurInfo']?['quantiteEau'] as num?)?.toDouble() ?? 0.0;
+          final newQty  = (current - quantity).clamp(0.0, double.infinity);
+          await ApiService.updateWaterQuantity(quantiteEau: newQty);
+          debugPrint('[WATER] $current - $quantity = $newQty');
+        } catch (e) {
+          debugPrint('[ORDERS] water update failed: $e');
+        }
+      }
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('✅ Commande acceptée — voir l\'itinéraire sur la carte'),
         backgroundColor: Colors.green,
-        duration: Duration(seconds: 2),
+        duration: Duration(seconds: 5),
       ));
 
       // Recompute route for accepted orders only, then switch to map
@@ -437,7 +484,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('✅ Commande acceptée'),
         backgroundColor: Colors.green,
-        duration: Duration(seconds: 2),
+        duration: Duration(seconds: 5),
       ));
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -469,7 +516,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('[TEST] Commande refusée'),
           backgroundColor: Colors.red,
-          duration: Duration(seconds: 2),
+          duration: Duration(seconds: 5),
         ));
       }
 
@@ -585,6 +632,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: const Text('Commandes'),
         backgroundColor: const Color(0xFF1E3A8A),
         foregroundColor: Colors.white,

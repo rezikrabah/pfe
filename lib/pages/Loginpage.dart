@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:test2/pages/createaccpage.dart';
 import '../client/suivi.dart';
 import '../fournisseur/ChauffeurScreen.dart';
@@ -18,55 +20,61 @@ class Loginpage extends StatefulWidget {
 }
 
 class _LoginpageState extends State<Loginpage> {
-  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _emailController    = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
-  bool _isLoading = false;
+  bool _isLoading       = false;
   bool _obscurePassword = true;
 
-  // ✅ CREDENTIALS ADMIN EN DUR (pas de backend)
-  static const String _ADMIN_EMAIL = 'adminwaveau@gmail.com';
-  static const String _ADMIN_PASSWORD = 'water2025@';
+  static const String _base = 'https://pfe-backend-nwmy.onrender.com';
 
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final email = _emailController.text.trim();
+    final email    = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
     setState(() => _isLoading = true);
 
-    // ✅ ÉTAPE 1 : VÉRIFICATION ADMIN LOCAL (pas d'appel API)
-    if (email == _ADMIN_EMAIL && password == _ADMIN_PASSWORD) {
-      // Simuler un délai pour l'effet visuel
-      await Future.delayed(const Duration(milliseconds: 800));
+    // ── STEP 1: try admin login on backend ──────────────────────
+    // In Loginpage.dart _login() method
+    try {
+      final adminRes = await http.post(
+        Uri.parse('$_base/api/admin/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email, 'password': password}),
+      ).timeout(const Duration(seconds: 15));
 
-      if (!mounted) return;
+      print('[Admin] status: ${adminRes.statusCode}');
+      print('[Admin] body: ${adminRes.body}');
 
-      setState(() => _isLoading = false);
-
-      // Navigation directe vers l'interface admin
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const AdminApp()),
-      );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Bienvenue Administrateur'),
-          backgroundColor: Colors.purple,
-        ),
-      );
-      return; // ← STOP ICI, pas d'appel backend
+      if (adminRes.statusCode == 200) {
+        final data = jsonDecode(adminRes.body);
+        AdminToken.set(data['token']);
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const AdminApp()),
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bienvenue Administrateur'), backgroundColor: Colors.purple),
+        );
+        return;
+      } else if (adminRes.statusCode == 401) {
+        // Wrong admin password — don't fall through, just show error
+        // Remove this block if you want non-admins to still try normal login
+      }
+    } catch (e) {
+      print('[Admin] exception: $e');
+      // network error — fall through to normal login
     }
 
-    // ✅ ÉTAPE 2 : LOGIN NORMAL (appel API pour les autres utilisateurs)
-    final result = await ApiService.login(
-      email: email,
-      password: password,
-    );
+    // ── STEP 2: normal user login ────────────────────────────────
+    final result = await ApiService.login(email: email, password: password);
 
+    if (!mounted) return;
     setState(() => _isLoading = false);
 
     if (result['error'] != null) {
@@ -86,19 +94,20 @@ class _LoginpageState extends State<Loginpage> {
 
       final String? role = result['user']?['role'];
 
-      // Redirections normales (sans admin)
+      if (!mounted) return;
+
       if (role == 'client') {
-        Navigator.pushReplacement(context,
-            MaterialPageRoute(builder: (_) => suivi()));
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => suivi()));
       } else if (role == 'chauffeur') {
-        Navigator.pushReplacement(context,
-            MaterialPageRoute(builder: (_) => ProviderHomeScreen()));
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => ProviderHomeScreen()));
       } else if (role == 'gerant') {
-        Navigator.pushReplacement(context,
-            MaterialPageRoute(builder: (_) => const ChauffeurScreen()));
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => const ChauffeurScreen()));
       } else {
-        Navigator.pushReplacement(context,
-            MaterialPageRoute(builder: (_) => RoleSelectionScreen()));
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => RoleSelectionScreen()));
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -112,8 +121,7 @@ class _LoginpageState extends State<Loginpage> {
 
   @override
   Widget build(BuildContext context) {
-    // ... reste du build identique ...
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth  = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
@@ -150,7 +158,7 @@ class _LoginpageState extends State<Loginpage> {
                 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=774&auto=format&fit=crop&ixlib=rb-4.1.0',
                 fit: BoxFit.cover,
                 placeholder: (_, __) => const SizedBox.shrink(),
-                errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                errorWidget:  (_, __, ___) => const SizedBox.shrink(),
               ),
             ),
             // Gradient overlay
@@ -159,7 +167,7 @@ class _LoginpageState extends State<Loginpage> {
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
+                    end:   Alignment.bottomCenter,
                     colors: [
                       Color(0x880C2A34),
                       Color(0xDD0C2A34),
@@ -195,7 +203,6 @@ class _LoginpageState extends State<Loginpage> {
                       ),
                     ),
                     SizedBox(height: screenHeight * 0.02),
-                    // Title
                     Text(
                       'Content de vous revoir',
                       style: TextStyle(
@@ -214,7 +221,7 @@ class _LoginpageState extends State<Loginpage> {
                       ),
                     ),
                     SizedBox(height: screenHeight * 0.035),
-                    // Email field
+                    // Email
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
@@ -222,9 +229,9 @@ class _LoginpageState extends State<Loginpage> {
                           color: Colors.white, fontSize: screenWidth * 0.035),
                       decoration: _inputDecoration(
                         label: 'Email',
-                        hint: 'john@example.com',
-                        icon: Icons.email_outlined,
-                        screenWidth: screenWidth,
+                        hint:  'john@example.com',
+                        icon:  Icons.email_outlined,
+                        screenWidth:  screenWidth,
                         screenHeight: screenHeight,
                       ),
                       validator: (v) {
@@ -234,7 +241,7 @@ class _LoginpageState extends State<Loginpage> {
                       },
                     ),
                     SizedBox(height: screenHeight * 0.018),
-                    // Password field
+                    // Password
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
@@ -242,9 +249,9 @@ class _LoginpageState extends State<Loginpage> {
                           color: Colors.white, fontSize: screenWidth * 0.035),
                       decoration: _inputDecoration(
                         label: 'Mot de passe',
-                        hint: '••••••••',
-                        icon: Icons.lock_outline,
-                        screenWidth: screenWidth,
+                        hint:  '••••••••',
+                        icon:  Icons.lock_outline,
+                        screenWidth:  screenWidth,
                         screenHeight: screenHeight,
                         suffixIcon: IconButton(
                           icon: Icon(
@@ -260,7 +267,7 @@ class _LoginpageState extends State<Loginpage> {
                       ),
                       validator: (v) {
                         if (v!.isEmpty) return 'Veuillez entrer votre mot de passe';
-                        if (v.length < 8) return 'Au moins 8 caractères';
+                        if (v.length < 6) return 'Au moins 6 caractères';
                         return null;
                       },
                     ),
@@ -272,9 +279,7 @@ class _LoginpageState extends State<Loginpage> {
                             MaterialPageRoute(builder: (_) => forgotpassword())),
                         style: TextButton.styleFrom(
                           padding: EdgeInsets.symmetric(
-                            horizontal: 0,
-                            vertical: screenHeight * 0.01,
-                          ),
+                              horizontal: 0, vertical: screenHeight * 0.01),
                         ),
                         child: Text(
                           'Mot de passe oublié?',
@@ -289,7 +294,7 @@ class _LoginpageState extends State<Loginpage> {
                     SizedBox(height: screenHeight * 0.01),
                     // Login button
                     SizedBox(
-                      width: double.infinity,
+                      width:  double.infinity,
                       height: screenHeight * 0.065,
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _login,
@@ -299,18 +304,15 @@ class _LoginpageState extends State<Loginpage> {
                           disabledBackgroundColor:
                           const Color(0xFF0099CC).withOpacity(0.5),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
+                              borderRadius: BorderRadius.circular(14)),
                           elevation: 0,
                         ),
                         child: _isLoading
                             ? SizedBox(
-                          width: screenWidth * 0.055,
+                          width:  screenWidth * 0.055,
                           height: screenWidth * 0.055,
                           child: const CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
+                              color: Colors.white, strokeWidth: 2),
                         )
                             : Text(
                           'Se connecter',
@@ -323,7 +325,7 @@ class _LoginpageState extends State<Loginpage> {
                       ),
                     ),
                     SizedBox(height: screenHeight * 0.03),
-                    // Sign up link
+                    // Sign up
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -338,7 +340,7 @@ class _LoginpageState extends State<Loginpage> {
                           onTap: () => Navigator.push(context,
                               MaterialPageRoute(builder: (_) => createaccpage())),
                           child: Text(
-                            'S\'inscrire',
+                            "S'inscrire",
                             style: TextStyle(
                               color: const Color(0xFF00C8F0),
                               fontSize: screenWidth * 0.033,
@@ -376,13 +378,12 @@ class _LoginpageState extends State<Loginpage> {
       ),
       hintText: hint,
       hintStyle: TextStyle(
-        fontSize: screenWidth * 0.03,
-        color: Colors.white.withOpacity(0.25),
-      ),
-      prefixIcon:
-      Icon(icon, color: const Color(0xFF00C8F0), size: screenWidth * 0.05),
+          fontSize: screenWidth * 0.03,
+          color: Colors.white.withOpacity(0.25)),
+      prefixIcon: Icon(icon,
+          color: const Color(0xFF00C8F0), size: screenWidth * 0.05),
       suffixIcon: suffixIcon,
-      filled: true,
+      filled:    true,
       fillColor: Colors.white.withOpacity(0.06),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
@@ -403,7 +404,7 @@ class _LoginpageState extends State<Loginpage> {
       errorStyle: const TextStyle(color: Colors.redAccent, fontSize: 11),
       contentPadding: EdgeInsets.symmetric(
         horizontal: screenWidth * 0.04,
-        vertical: screenHeight * 0.018,
+        vertical:   screenHeight * 0.018,
       ),
     );
   }
