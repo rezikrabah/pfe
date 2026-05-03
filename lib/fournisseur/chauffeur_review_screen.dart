@@ -84,6 +84,12 @@ class _ChauffeurReviewScreenState extends State<ChauffeurReviewScreen>
     HapticFeedback.mediumImpact();
     setState(() => _submitting = true);
 
+    if (widget.commandeId.startsWith('gen_')) { 
+      setState(() => _submitted = true);
+      _successCtrl.forward();
+      return;
+    }
+
     final result = await ApiService.submitChauffeurReview(
       commandeId:    widget.commandeId,
       note:          _clientRating,

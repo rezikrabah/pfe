@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'client_info.dart';
 import 'commandes.dart';
 import 'historique.dart';
 import 'profile.dart';
@@ -246,6 +247,17 @@ class _suiviState extends State<suivi> {
               backgroundColor: Colors.white,
               onPressed: _goToMyLocation,
               child: const Icon(Icons.my_location, color: Color(0xFF0B3C49)),
+            ),
+          ),
+          Positioned(
+            bottom: screenHeight * 0.69,
+            right: screenWidth * 0.04,
+            child: FloatingActionButton.small(
+              heroTag: 'location',
+              backgroundColor: Colors.white,
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ClientInfoScreen())),
+              child: const Icon(Icons.info_outline, color: Color(0xFF0B3C49)),
             ),
           ),
 

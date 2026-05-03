@@ -375,10 +375,10 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(1),
                 decoration: BoxDecoration(
                     color: color.withOpacity(0.12), shape: BoxShape.circle),
-                child: Icon(icon, size: 36, color: color),
+                child: Icon(icon, size: 32, color: color),
               ),
               const SizedBox(height: 12),
               Flexible(
@@ -727,25 +727,65 @@ class _DriversScreenState extends State<DriversScreen> {
 
   Future<void> _load() async {
     setState(() { _loading = true; _hasError = false; });
-    final data = await AdminApi.getChauffeurs();
+
+    // Fetch both in parallel
+    final results = await Future.wait([
+      AdminApi.getChauffeurs(),
+      AdminApi.getReviews(),
+    ]);
+
+    final data    = results[0];
+    final reviews = results[1];
+
     if (!mounted) return;
     if (data.isEmpty) {
       setState(() { _hasError = true; _loading = false; });
       return;
     }
+
+    // Build map: chauffeur nom → list of notes given by clients
+    final Map<String, List<int>> ratingMap = {};
+
+// Step 1: build commande → chauffeur nom from chauffeur reviews
+    final Map<String, String> commandeToDriver = {};
+    for (final r in reviews) {
+      if (r['reviewerRole'] != 'chauffeur') continue;
+      final commande = r['commande'] ?? '';
+      final nom      = r['chauffeur']?['nom'] ?? '';
+      if (commande.isNotEmpty && nom.isNotEmpty) {
+        commandeToDriver[commande] = nom;
+      }
+    }
+
+// Step 2: for each client review, find the driver via commande
+    for (final r in reviews) {
+      if (r['reviewerRole'] != 'client') continue;
+      final commande = r['commande'] ?? '';
+      final nom      = commandeToDriver[commande] ?? '';
+      if (nom.isEmpty) continue;
+      ratingMap.putIfAbsent(nom, () => []).add((r['note'] ?? 0).toInt());
+    }
+    debugPrint('ratingMap: $ratingMap');
+    debugPrint('driver noms: ${data.map((d) => d['nom']).toList()}');
     setState(() {
-      _drivers = data.map((d) => _map(d)).toList();
+      _drivers = data.map((d) {
+        final notes = ratingMap[d['nom']] ?? [];
+        final avg   = notes.isEmpty
+            ? 0.0
+            : notes.reduce((a, b) => a + b) / notes.length;
+        return _map(d, avg);
+      }).toList();
       _loading = false;
     });
   }
 
-  Map<String, dynamic> _map(dynamic d) => {
+  Map<String, dynamic> _map(dynamic d, [double computedRating = 0.0]) => {
     '_id':       d['_id'] ?? d['id'] ?? '',
     'name':      '${d['nom'] ?? ''} ${d['prenom'] ?? ''}'.trim(),
     'phone':     d['telephone'] ?? '',
     'zone':      d['zone'] ?? d['wilaya'] ?? 'N/A',
     'deliveries':d['totalLivraisons'] ?? 0,
-    'rating':    (d['noteMoyenne'] ?? 0.0).toDouble(),
+    'rating':    computedRating,   // ← real rating: avg of what clients gave him
     'monthly':   d['livraisonsMois'] ?? 0,
     'status':    _mapStatus(d['status'] ?? d['statut'] ?? 'actif'),
     'available': d['disponible'] ?? false,
@@ -829,6 +869,7 @@ class _DriversScreenState extends State<DriversScreen> {
                   const SizedBox(width: 10),
                   _statBox('Ce mois', '${d['monthly']}', Colors.teal),
                   const SizedBox(width: 10),
+                  // ✅ real rating: avg of notes clients gave this chauffeur
                   _statBox('Note moy.',
                       '${(d['rating'] as double).toStringAsFixed(1)}★',
                       Colors.amber),
@@ -923,8 +964,27 @@ class _DriversScreenState extends State<DriversScreen> {
           : _hasError
           ? buildError('Impossible de charger les chauffeurs.', _load)
           : Column(children: [
-        _filterBar(['Tous', 'Actif', 'Suspendu', 'Inactif'],
-            Colors.green),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: ['Tous', 'Actif', 'Suspendu', 'Inactif'].map((f) {
+                final sel = _filter == f;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text(f),
+                    selected: sel,
+                    onSelected: (_) => setState(() => _filter = f),
+                    selectedColor: Colors.green.withOpacity(0.2),
+                    checkmarkColor: Colors.green,
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
         Expanded(
           child: RefreshIndicator(
             onRefresh: _load,
@@ -933,17 +993,15 @@ class _DriversScreenState extends State<DriversScreen> {
                 : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: filtered.length,
-              separatorBuilder: (_, __) =>
-              const SizedBox(height: 8),
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (ctx, i) {
-                final d = filtered[i];
+                final d  = filtered[i];
                 final sc = _statusColor(d['status']);
                 return Card(
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
                   child: ListTile(
-                    contentPadding:
-                    const EdgeInsets.symmetric(
+                    contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 10),
                     leading: Stack(children: [
                       CircleAvatar(
@@ -957,53 +1015,41 @@ class _DriversScreenState extends State<DriversScreen> {
                         child: Container(
                           width: 12, height: 12,
                           decoration: BoxDecoration(
-                            color: d['available']
-                                ? Colors.green
-                                : Colors.grey,
+                            color: d['available'] ? Colors.green : Colors.grey,
                             shape: BoxShape.circle,
-                            border: Border.all(
-                                color: Colors.white, width: 2),
+                            border: Border.all(color: Colors.white, width: 2),
                           ),
                         ),
                       ),
                     ]),
                     title: Text(d['name'],
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600)),
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
                     subtitle: Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(d['phone'],
-                              style: const TextStyle(
-                                  fontSize: 12)),
+                              style: const TextStyle(fontSize: 12)),
                           Text('Zone : ${d['zone']}',
-                              style: const TextStyle(
-                                  fontSize: 12)),
+                              style: const TextStyle(fontSize: 12)),
                         ]),
                     trailing: Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.end,
-                        mainAxisAlignment:
-                        MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding:
-                            const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
                                 color: sc.withOpacity(0.12),
-                                borderRadius:
-                                BorderRadius.circular(20)),
+                                borderRadius: BorderRadius.circular(20)),
                             child: Text(d['status'],
                                 style: TextStyle(
                                     color: sc,
                                     fontSize: 11,
-                                    fontWeight:
-                                    FontWeight.w600)),
+                                    fontWeight: FontWeight.w600)),
                           ),
                           const SizedBox(height: 4),
+                          // ✅ real rating from clients
                           Text(
                             '${(d['rating'] as double).toStringAsFixed(1)}★',
                             style: const TextStyle(
@@ -1022,30 +1068,7 @@ class _DriversScreenState extends State<DriversScreen> {
       ]),
     );
   }
-
-  Widget _filterBar(List<String> options, Color color) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: options.map((f) {
-          final sel = _filter == f;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilterChip(
-              label: Text(f),
-              selected: sel,
-              onSelected: (_) => setState(() => _filter = f),
-              selectedColor: color.withOpacity(0.15),
-              checkmarkColor: color,
-            ),
-          );
-        }).toList(),
-      ),
-    ),
-  );
 }
-
 // ==================== ORDERS SCREEN ====================
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -1065,16 +1088,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final results = await Future.wait([
+
       AdminApi.getAllCommandes(),
       AdminApi.getChauffeurs(),
     ]);
+
     if (!mounted) return;
+
     setState(() {
       _orders  = results[0].map((o) => _mapOrder(o)).toList();
       _drivers = results[1].map((d) => {
         '_id':  d['_id'] ?? d['id'] ?? '',
         'name': '${d['nom'] ?? ''} ${d['prenom'] ?? ''}'.trim(),
       }).toList();
+
       _loading = false;
     });
   }
@@ -1879,10 +1906,14 @@ class ReviewsScreen extends StatefulWidget {
 }
 
 class _ReviewsScreenState extends State<ReviewsScreen> {
-  List<Map<String, dynamic>> _reviews = [];
-  bool _loading = true;
+  List<Map<String, dynamic>> _reviews          = [];
+  List<Map<String, dynamic>> _clientReviews    = [];
+  List<Map<String, dynamic>> _chauffeurReviews = [];
+
+  bool    _loading      = true;
   int?    _filterNote;
   String? _filterDriver;
+  String? _filterClient;
 
   @override
   void initState() { super.initState(); _load(); }
@@ -1892,33 +1923,125 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     final data = await AdminApi.getReviews();
     if (!mounted) return;
     setState(() {
-      _reviews = data.map((r) => _map(r)).toList();
+      _reviews          = data.map((r) => _map(r)).toList();
+      _clientReviews    = _reviews.where((r) => r['reviewerRole'] == 'client').toList();
+      _chauffeurReviews = _reviews.where((r) => r['reviewerRole'] == 'chauffeur').toList();
+
+      // Fill missing driver name in client reviews using paired chauffeur review
+      for (final cr in _clientReviews) {
+        if (cr['driver'] == 'N/A') {
+          final paired = _chauffeurReviews.firstWhere(
+                (dr) => dr['commande'] == cr['commande'],
+            orElse: () => {},
+          );
+          if (paired.isNotEmpty) cr['driver'] = paired['driver'];
+        }
+      }
+
       _loading = false;
     });
   }
 
   Map<String, dynamic> _map(dynamic r) => {
-    '_id':     r['_id'] ?? r['id'] ?? '',
-    'client':  r['client']?['nom']   ?? r['clientNom']   ?? 'Client',
-    'driver':  r['chauffeur']?['nom'] ?? r['chauffeurNom'] ?? 'Chauffeur',
-    'note':    (r['note'] ?? r['rating'] ?? 0).toInt(),
-    'comment': r['commentaire'] ?? r['comment'] ?? '',
-    'hidden':  r['hidden'] ?? r['masque'] ?? false,
+    '_id':          r['_id'] ?? r['id'] ?? '',
+    'commande':     r['commande'] ?? '',
+    'client':       r['client']?['nom']    ?? 'Client',
+    'driver':       r['chauffeur']?['nom'] ?? 'N/A',
+    'note':         (r['note'] ?? 0).toInt(),
+    'comment':      r['commentaire'] ?? r['comment'] ?? '',
+    'hidden':       r['hidden'] ?? false,
+    'reviewerRole': r['reviewerRole'] ?? '',
   };
+
+  Widget _buildRatingRow({
+    required String label,
+    required String groupBy,
+    required List<Map<String, dynamic>> reviews,
+  }) {
+    final Map<String, List<int>> groups = {};
+    for (final r in reviews) {
+      final key = r[groupBy] as String;
+      if (key == 'N/A' || key.isEmpty) continue;
+      groups.putIfAbsent(key, () => []).add(r['note'] as int);
+    }
+
+    if (groups.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+          child: Text(label,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        ),
+        SizedBox(
+          height: 80,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            itemCount: groups.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) {
+              final entry = groups.entries.elementAt(i);
+              final avg   = entry.value.reduce((a, b) => a + b) / entry.value.length;
+              final sel   = groupBy == 'driver'
+                  ? _filterDriver == entry.key
+                  : _filterClient == entry.key;
+
+              return GestureDetector(
+                onTap: () => setState(() {
+                  if (groupBy == 'driver') {
+                    _filterDriver = sel ? null : entry.key;
+                  } else {
+                    _filterClient = sel ? null : entry.key;
+                  }
+                }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: sel ? Colors.amber.withOpacity(0.2) : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(14),
+                    border: sel ? Border.all(color: Colors.amber) : null,
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(entry.key.split(' ').first,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                      const SizedBox(height: 4),
+                      Text('${avg.toStringAsFixed(1)}★',
+                          style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                      Text('${entry.value.length} avis',
+                          style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Build per-driver stats
-    final Map<String, List<int>> driverNotes = {};
-    for (final r in _reviews) {
-      driverNotes
-          .putIfAbsent(r['driver'] as String, () => [])
-          .add(r['note'] as int);
-    }
-
     final filtered = _reviews.where((r) {
-      if (_filterNote   != null && r['note']   != _filterNote)   return false;
-      if (_filterDriver != null && r['driver'] != _filterDriver)  return false;
+      if (_filterNote != null && r['note'] != _filterNote) return false;
+
+      // tapped a chauffeur card → show only reviews WHERE he was rated (by clients)
+      if (_filterDriver != null) {
+        if (r['reviewerRole'] != 'client') return false;
+        if (r['driver'] != _filterDriver) return false;
+      }
+
+      // tapped a client card → show only reviews WHERE he was rated (by chauffeurs)
+      if (_filterClient != null) {
+        if (r['reviewerRole'] != 'chauffeur') return false;
+        if (r['client'] != _filterClient) return false;
+      }
+
       return true;
     }).toList();
 
@@ -1927,53 +2050,21 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
       body: _loading
           ? buildLoading()
           : Column(children: [
-        // ── driver cards ──
-        SizedBox(
-          height: 90,
-          child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            scrollDirection: Axis.horizontal,
-            itemCount: driverNotes.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (_, i) {
-              final entry = driverNotes.entries.elementAt(i);
-              final avg   = entry.value.reduce((a, b) => a + b) /
-                  entry.value.length;
-              final sel   = _filterDriver == entry.key;
-              return GestureDetector(
-                onTap: () => setState(
-                        () => _filterDriver = sel ? null : entry.key),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: sel
-                        ? Colors.amber.withOpacity(0.2)
-                        : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(14),
-                    border: sel ? Border.all(color: Colors.amber) : null,
-                  ),
-                  child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(entry.key.split(' ').first,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12)),
-                        const SizedBox(height: 4),
-                        Text('${avg.toStringAsFixed(1)}★',
-                            style: const TextStyle(
-                                color: Colors.amber,
-                                fontWeight: FontWeight.bold)),
-                        Text('${entry.value.length} avis',
-                            style: const TextStyle(
-                                fontSize: 10, color: Colors.grey)),
-                      ]),
-                ),
-              );
-            },
-          ),
+
+        // ── Chauffeurs rated by clients ──
+        _buildRatingRow(
+          label: '🚗 Chauffeurs',
+          groupBy: 'driver',
+          reviews: _clientReviews,
         ),
+
+        // ── Clients rated by chauffeurs ──
+        _buildRatingRow(
+          label: '👤 Clients',
+          groupBy: 'client',
+          reviews: _chauffeurReviews,
+        ),
+
         // ── note filter ──
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
@@ -2002,6 +2093,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
             ]),
           ),
         ),
+
         // ── list ──
         Expanded(
           child: RefreshIndicator(
@@ -2011,12 +2103,13 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: filtered.length,
-              separatorBuilder: (_, __) =>
-              const SizedBox(height: 8),
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (_, i) {
                 final r      = filtered[i];
                 final note   = r['note']   as int;
                 final hidden = r['hidden'] as bool;
+                final isClientReview = r['reviewerRole'] == 'client';
+
                 return Opacity(
                   opacity: hidden ? 0.4 : 1.0,
                   child: Card(
@@ -2025,82 +2118,78 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                     child: Padding(
                       padding: const EdgeInsets.all(14),
                       child: Column(
-                          crossAxisAlignment:
-                          CrossAxisAlignment.start,
-                          children: [
-                            Row(children: [
-                              CircleAvatar(
-                                radius: 18,
-                                backgroundColor:
-                                Colors.amber.shade100,
-                                child: Text(
-                                  (r['client'] as String).isNotEmpty
-                                      ? r['client'][0] as String
-                                      : '?',
-                                  style: TextStyle(
-                                      color: Colors.amber.shade800,
-                                      fontWeight: FontWeight.bold),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            CircleAvatar(
+                              radius: 18,
+                              backgroundColor: Colors.amber.shade100,
+                              child: Text(
+                                isClientReview
+                                    ? ((r['client'] as String).isNotEmpty ? r['client'][0] as String : '?')
+                                    : ((r['driver'] as String).isNotEmpty ? r['driver'][0] as String : '?'),
+                                style: TextStyle(
+                                    color: Colors.amber.shade800,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    isClientReview
+                                        ? r['client'] as String
+                                        : r['driver'] as String,
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                  Text(
+                                    isClientReview
+                                        ? 'Avis sur : ${r['driver']}'
+                                        : 'Avis sur : ${r['client']}',
+                                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Row(
+                              children: List.generate(
+                                5,
+                                    (j) => Icon(
+                                  j < note ? Icons.star : Icons.star_border,
+                                  size: 18,
+                                  color: Colors.amber,
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                    crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                    children: [
-                                      Text(r['client'] as String,
-                                          style: const TextStyle(
-                                              fontWeight:
-                                              FontWeight.w600)),
-                                      Text(
-                                          'Chauffeur : ${r['driver']}',
-                                          style: const TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.grey)),
-                                    ]),
-                              ),
-                              Row(
-                                  children: List.generate(
-                                      5,
-                                          (j) => Icon(
-                                          j < note
-                                              ? Icons.star
-                                              : Icons.star_border,
-                                          size: 18,
-                                          color: Colors.amber))),
-                            ]),
-                            const SizedBox(height: 10),
-                            Text(r['comment'] as String,
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.black87)),
-                            const SizedBox(height: 8),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: TextButton.icon(
-                                onPressed: () async {
-                                  final ok = await AdminApi
-                                      .hideReview(
-                                      r['_id'] as String,
-                                      !hidden);
-                                  if (ok && mounted) {
-                                    setState(
-                                            () => r['hidden'] = !hidden);
-                                  }
-                                },
-                                icon: Icon(
-                                    hidden
-                                        ? Icons.visibility_outlined
-                                        : Icons
-                                        .visibility_off_outlined,
-                                    size: 16),
-                                label: Text(
-                                    hidden ? 'Afficher' : 'Masquer',
-                                    style: const TextStyle(
-                                        fontSize: 12)),
                               ),
                             ),
                           ]),
+                          const SizedBox(height: 10),
+                          Text(r['comment'] as String,
+                              style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: () async {
+                                final ok = await AdminApi.hideReview(
+                                    r['_id'] as String, !hidden);
+                                if (ok && mounted) {
+                                  setState(() => r['hidden'] = !hidden);
+                                }
+                              },
+                              icon: Icon(
+                                  hidden
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  size: 16),
+                              label: Text(
+                                  hidden ? 'Afficher' : 'Masquer',
+                                  style: const TextStyle(fontSize: 12)),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 );

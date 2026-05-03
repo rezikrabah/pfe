@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart'; // ✅ Add your correct import path
 
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({Key? key}) : super(key: key);
+  final String? chauffeurId;
+  const HistoryScreen({Key? key, this.chauffeurId}) : super(key: key);
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -10,6 +11,7 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   bool _isLoadingDeliveries = false;
+
   String? _apiError;
   String selectedPeriod = 'Jour';
 
@@ -72,11 +74,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
     setState(() {
       _isLoadingDeliveries = true;
       _apiError = null;
+
     });
 
     try {
-      final result = await ApiService.getCommandesByStatus('livrée');
-
+      final result = await ApiService.getCommandesByStatus(
+        'livrée',
+        chauffeurId: widget.chauffeurId,
+      );
       if (result['error'] != null) {
         setState(() {
           _apiError = result['error'];

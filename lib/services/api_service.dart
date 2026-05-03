@@ -223,7 +223,7 @@ class ApiService {
         Uri.parse('$pythonUrl/optimisation/lancer-direct'),
         headers: {'Content-Type': 'application/json'},
         body: body,
-      ).timeout(const Duration(seconds: 60));
+      ).timeout(const Duration(seconds: 180));
 
       if (res.statusCode != 200) {
         return {'error': 'VRP not ready (${res.statusCode})'};
@@ -231,7 +231,14 @@ class ApiService {
 
       final decoded = jsonDecode(res.body) as Map<String, dynamic>;
 
+// ADD THESE 4 LINES:
+      print('[VRP RAW] keys: ${decoded.keys.toList()}');
+      print('[VRP RAW] unserved: ${decoded['unserved']}');
+      print('[VRP RAW] vrpIdToOriginalId sample: ${Map.fromEntries(vrpIdToOriginalId.entries.take(5))}');
+      final firstRoute = (decoded['routes'] as List?)?.first;
+      print('[VRP RAW] first route ids: ${(firstRoute?['route'] as List?)?.take(3).toList()}');
       // ── Remap VRP integer IDs → original string IDs ──
+      // ── Remap VRP integer IDs → original string IDs (routes) ──
       final routes = decoded['routes'] as List<dynamic>? ?? [];
       for (final route in routes) {
         final rawRoute = route['route'] as List<dynamic>? ?? [];
@@ -241,7 +248,19 @@ class ApiService {
         }).toList();
       }
 
+      // ── Remap unserved integer IDs → original string IDs ──
+      final unservedRaw = decoded['unserved'] as List<dynamic>? ?? [];
+      decoded['unserved_original_ids'] = unservedRaw.map((id) {
+        print('[REMAP] unserved_original_ids: ${decoded['unserved_original_ids']}');
+        final vid = int.tryParse(id.toString());
+        return vid != null ? (vrpIdToOriginalId[vid] ?? id.toString()) : id.toString();
+      }).toList();
+
+      print('[REMAP] unserved count: ${unservedRaw.length}');
+      print('[REMAP] unserved_original_ids: ${decoded['unserved_original_ids']}');
+
       return decoded;
+
 
     } on SocketException  { return {'error': 'Python API unreachable.'}; }
     on TimeoutException   { return {'error': 'VRP timeout.'}; }
@@ -337,14 +356,23 @@ class ApiService {
       return {'error': e.toString()};
     }
   }
-  static Future<Map<String, dynamic>> getCommandesByStatus(String status) async {
+  static Future<Map<String, dynamic>> getCommandesByStatus(
+      String status, {
+        String? chauffeurId, // ← optional filter
+      }) async {
     try {
+      // Build URL with optional chauffeurId param
+      String url = '$baseUrl/api/commandes?status=${Uri.encodeComponent(status)}';
+      if (chauffeurId != null) {
+        url += '&chauffeurId=${Uri.encodeComponent(chauffeurId)}';
+      }
+
       final response = await http.get(
-        Uri.parse('$baseUrl/api/commandes?status=${Uri.encodeComponent(status)}'),
+        Uri.parse(url),
         headers: _authHeaders,
       );
 
-      print('[API] getCommandesByStatus(${status}) → ${response.statusCode}');
+      print('[API] getCommandesByStatus($status, chauffeurId: $chauffeurId) → ${response.statusCode}');
       print('[API] body: ${response.body}');
 
       if (response.statusCode == 200) {

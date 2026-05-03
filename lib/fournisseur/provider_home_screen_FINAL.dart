@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 
 import 'chauffeur_review_screen.dart';
 
+import 'conducteur_info.dart';
 import 'orders_screen.dart';
 import 'history_screen.dart';
 import 'profile_screen.dart';
@@ -467,18 +468,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     print('>>> _fullRoutePoints count: ${_fullRoutePoints.length}');
     print('>>> _routePointsByChauffeur keys: ${_routePointsByChauffeur.keys.toList()}');
 
-    // FIX: for test orders, if nothing is explicitly accepted yet, treat all
-    // stops as accepted so the picker can still show chauffeurs.
-    final hasAnyAccepted = _orderStatus.values.any((v) => v == 'accepted');
-    if (!hasAnyAccepted && _allStops.isNotEmpty) {
-      // Auto-accept all for simulation purposes
-      for (final stop in _allStops) {
-        _orderStatus.putIfAbsent(stop.mongoId, () => 'accepted');
-        if (_orderStatus[stop.mongoId] == 'pending') {
-          _orderStatus[stop.mongoId] = 'accepted';
-        }
-      }
-    }
 
     final Map<String, List<_RouteStop>> acceptedByChauffeur = {};
     for (final stop in _allStops) {
@@ -997,8 +986,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     if (filteredStops.isEmpty) return;
 
     final Map<String, List<_RouteStop>> byChauffeur = {};
-    for (final stop in filteredStops) {
-      final nom = _stopChauffeur[stop.mongoId] ?? 'default';
+    for (int i = 0; i < filteredStops.length; i++) {
+      final stop = filteredStops[i];
+      final nom = _stopChauffeur[stop.mongoId]
+          ?? (_testChauffeurs.isNotEmpty
+              ? _testChauffeurs[i % _testChauffeurs.length]['nom'].toString()
+              : _myName);
+      _stopChauffeur.putIfAbsent(stop.mongoId, () => nom);
       byChauffeur.putIfAbsent(nom, () => []).add(stop);
     }
 
@@ -1021,13 +1015,14 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             (c) => c['nom'].toString() == nom,
         orElse: () => <String, Object>{},
       );
+      if (chauffeurData.isEmpty) {
+        _log('WARNING: no chauffeur found for nom="$nom", falling back to current position');
+      }
 
-      final double startLat = _testOrders.isEmpty
-          ? _currentPosition.latitude
-          : (chauffeurData['lat'] as num?)?.toDouble() ?? _currentPosition.latitude;
-      final double startLon = _testOrders.isEmpty
-          ? _currentPosition.longitude
-          : (chauffeurData['lon'] as num?)?.toDouble() ?? _currentPosition.longitude;
+      final double? chauffLat = (chauffeurData['lat'] as num?)?.toDouble();
+      final double? chauffLon = (chauffeurData['lon'] as num?)?.toDouble();
+      final double startLat = chauffLat ?? _currentPosition.latitude;
+      final double startLon = chauffLon ?? _currentPosition.longitude;
       final startPoint = LatLng(startLat, startLon);
 
       final List<LatLng> waypoints = [
@@ -1095,7 +1090,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
     for (final id in rejectedIds) {
       try {
-        await ApiService.cancelCommande(id);
+        if (!id.startsWith('gen_')) {
+          await ApiService.cancelCommande(id);
+        }
       } catch (_) {}
     }
 
@@ -1173,8 +1170,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
   void _generateRandomChauffeurs() {
     final rng        = Random();
-    final firstNames = ['Karim', 'Yacine', 'Mourad', 'Bilal', 'Amine','rabah','ramzy'];
-    final lastNames  = ['Benali', 'Meziane', 'Cherif', 'Mansouri', 'Ferhat','rezik','naoui'];
+    final firstNames = ['Karim', 'Yacine', 'Mourad', 'Bilal', 'Amine', 'Rabah', 'Ramzy'];
+    final lastNames  = ['Benali', 'Meziane', 'Cherif', 'Mansouri', 'Ferhat', 'Rezik', 'Naoui'];
 
     final algerPositions = [
       {'lat': 36.7372, 'lon': 3.0865},
@@ -1187,22 +1184,69 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       {'lat': 36.7372, 'lon': 3.0865},
     ];
 
-    final chauffeurs = List.generate(5 + rng.nextInt(3), (i) {
+    // Shuffle both lists and pair them by index — guarantees unique full names
+    final shuffledFirst = [...firstNames]..shuffle(rng);
+    final shuffledLast  = [...lastNames]..shuffle(rng);
+
+    final count = 5 + rng.nextInt(3); // 5–7 chauffeurs
+    final chauffeurs = List.generate(count, (i) {
       final base = algerPositions[i % algerPositions.length];
       return {
         'id'        : 'chauffeur_${DateTime.now().millisecondsSinceEpoch}_$i',
-        'nom'       : '${firstNames[rng.nextInt(firstNames.length)]} '
-            '${lastNames[rng.nextInt(lastNames.length)]}',
+        'nom'       : '${shuffledFirst[i]} ${shuffledLast[i]}',
         'disponible': true,
         'lat'       : (base['lat'] as double) + (rng.nextDouble() - 0.5) * 0.01,
         'lon'       : (base['lon'] as double) + (rng.nextDouble() - 0.5) * 0.01,
-        'capacity': 3000 + rng.nextInt(2001),
+        'capacity'  : 3000 + rng.nextInt(2001),
       };
     });
 
     setState(() => _testChauffeurs = chauffeurs);
   }
+  void _addMoreChauffeurs() {
+    final rng        = Random();
+    final firstNames = ['Omar', 'Sofiane', 'Hamza', 'Reda', 'Nassim', 'Tarek', 'Mehdi'];
+    final lastNames  = ['Boudali', 'Kaci', 'Saadi', 'Ouali', 'Hamdani', 'Zerrouk', 'Aissou'];
 
+    final algerPositions = [
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7762, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+      {'lat': 36.7372, 'lon': 3.0865},
+    ];
+
+    // Collect all names already in use
+    final existingNames = _testChauffeurs
+        .map((c) => c['nom'] as String)
+        .toSet();
+
+    // Build all possible unique combinations not already used
+    final availableCombinations = [
+      for (final first in firstNames)
+        for (final last in lastNames)
+          '$first $last'
+    ].where((name) => !existingNames.contains(name)).toList()..shuffle(rng);
+
+    final count = min(2 + rng.nextInt(3), availableCombinations.length);
+
+    final newChauffeurs = List.generate(count, (i) {
+      final base = algerPositions[i % algerPositions.length];
+      return {
+        'id'        : 'chauffeur_${DateTime.now().millisecondsSinceEpoch}_extra_$i',
+        'nom'       : availableCombinations[i],
+        'disponible': true,
+        'lat'       : (base['lat'] as double) + (rng.nextDouble() - 0.5) * 0.01,
+        'lon'       : (base['lon'] as double) + (rng.nextDouble() - 0.5) * 0.01,
+        'capacity'  : 3000 + rng.nextInt(2001),
+      };
+    });
+
+    setState(() => _testChauffeurs = [..._testChauffeurs, ...newChauffeurs]);
+  }
   Future<void> _waitForGpsAndGoOnline() async {
     _showSnack('Initialisation du GPS...', Colors.blue);
     for (int i = 0; i < 20; i++) {
@@ -1453,10 +1497,12 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             onPressed: () async {
               Navigator.pop(ctx, true);
               try {
-                await ApiService.updateCommandeStatus(
-                  commandeId: stop.mongoId,
-                  status: 'livrée',
-                );
+                if (!stop.mongoId.startsWith('gen_')) {
+                  await ApiService.updateCommandeStatus(
+                    commandeId: stop.mongoId,
+                    status: 'livrée',
+                  );
+                }
               } catch (e) {
                 debugPrint('[TRACKING] Failed to update status: $e');
               }
@@ -1488,12 +1534,14 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
     if (confirmed == true && mounted) {
       try {
-        await ApiService.updateCommandeStatus(
-          commandeId: stop.mongoId,
-          status:     'livrée',
-          prix:       double.tryParse(
-              priceController.text.replaceAll(',', '.')),
-        );
+        if (!stop.mongoId.startsWith('gen_')) {
+          await ApiService.updateCommandeStatus(
+            commandeId: stop.mongoId,
+            status:     'livrée',
+            prix:       double.tryParse(
+                priceController.text.replaceAll(',', '.')),
+          );
+        }
         _showSnack('Livraison confirmée ✓', Colors.green);
 
         setState(() {
@@ -1631,7 +1679,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           nbVehicules:      _nbTestVehicles,
           chauffeurs:       _testChauffeurs,
         );
-
+        print('[DEBUG] vrpResult unserved_original_ids: ${vrpResult['unserved_original_ids']}');
+        print('[DEBUG] vrpResult unserved: ${vrpResult['unserved']}');
+        print('[DEBUG] vrpResult routes count: ${(vrpResult['routes'] as List?)?.length}');
         commandes = _testOrders.map((o) => {
           '_id':      o['id'],
           'position': {'lat': o['lat'], 'lon': o['lon']},
@@ -1699,42 +1749,113 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
       List<String> orderedMongoIds = [];
       bool         usedVrp         = false;
-
+      print('[DEBUG] vrpResult error: ${vrpResult['error']}');
+      print('[DEBUG] vrpResult has routes: ${vrpResult['routes'] != null}');
       if (vrpResult['error'] == null && vrpResult['routes'] != null) {
+        print('[DEBUG] entering VRP parse block, routes: ${(vrpResult['routes'] as List?)?.length}');
         final routes = vrpResult['routes'] as List;
+        for (int r = 0; r < routes.length; r++) {
+          final routeObj = routes[r];
+          print('[DEBUG] route[$r] ids: ${(routeObj['route'] as List?)?.take(5).toList()} — conducteur: ${routeObj['conducteur_nom'] ?? routeObj['conducteur_id']}');
+        }
+        print('[DEBUG] vrpResult keys: ${vrpResult.keys.toList()}');
+        print('[DEBUG] unserved raw: ${vrpResult['unserved']}');
+        print('[DEBUG] unserved_original_ids: ${vrpResult['unserved_original_ids']}');
         _totalDistanceKm = (vrpResult['distance_totale_km'] as num?)?.toDouble();
         _routeIsValid    = vrpResult['valide'] as bool? ?? false;
+
+        // Get unserved IDs remapped to original gen_ IDs by ApiService
+        final unservedIds = (vrpResult['unserved_original_ids'] as List? ?? [])
+
+            .map((e) => e.toString())
+            .toSet();
+        print('[DEBUG] unservedIds: $unservedIds');
+        print('[DEBUG] first route sample: ${((vrpResult['routes'] as List?)?.first['route'] as List?)?.take(3).toList()}');
+        print('[DEBUG] unservedIds count: ${unservedIds.length}');
+        print('[DEBUG] unservedIds: $unservedIds');
 
         for (final routeObj in routes) {
           final vrpIds = (routeObj['route'] as List?) ?? [];
           for (final vid in vrpIds) {
             final key = vid.toString();
-            if (commandeById.containsKey(key)) {
+            // Only add if it exists in commandeById AND is NOT unserved
+            if (commandeById.containsKey(key) && !unservedIds.contains(key)) {
               orderedMongoIds.add(key);
             }
           }
         }
 
+        print('[DEBUG] orderedMongoIds count: ${orderedMongoIds.length}');
+        print('[DEBUG] commandeById keys count: ${commandeById.length}');
+
+        orderedMongoIds = orderedMongoIds.toSet().toList();
+
+        if (orderedMongoIds.isNotEmpty) {
+          usedVrp = true;
+        }
+        print('[DEBUG] orderedMongoIds deduplicated: ${orderedMongoIds.length}');
+      }
+      _stopChauffeur.clear();
+      print('[DEBUG] vrpResult error: ${vrpResult['error']}');
+      print('[DEBUG] vrpResult has routes: ${vrpResult['routes'] != null}');
+      if (vrpResult['error'] == null && vrpResult['routes'] != null) {
+        final routes = vrpResult['routes'] as List;
+        _totalDistanceKm = (vrpResult['distance_totale_km'] as num?)?.toDouble();
+        _routeIsValid    = vrpResult['valide'] as bool? ?? false;
+
+        print('[DEBUG] entering VRP parse block, routes: ${routes.length}');
+
+        final Map<String, int> chauffeurCapacity = {};
+        for (final c in _testChauffeurs) {
+          chauffeurCapacity[c['nom'].toString()] =
+              (c['capacity'] as num?)?.toInt() ?? 5000;
+        }
+
+        final Set<String> alreadyAdded = {}; // ← prevent duplicates
+
+        for (int r = 0; r < routes.length; r++) {
+          final routeObj      = routes[r];
+          final vrpIds        = (routeObj['route'] as List?) ?? [];
+          final conducteurNom = routeObj['conducteur_nom']?.toString()
+              ?? (_testChauffeurs.length > r
+                  ? _testChauffeurs[r]['nom'].toString()
+                  : 'Conducteur ${r + 1}');
+          final capacity = chauffeurCapacity[conducteurNom]
+              ?? (_testChauffeurs.length > r
+                  ? ((_testChauffeurs[r]['capacity'] as num?)?.toInt() ?? 5000)
+                  : 5000);
+
+          int load = 0;
+          print('[CAP] route[$r] chauffeur=$conducteurNom capacity=$capacity');
+
+          for (final vid in vrpIds) {
+            final key = vid.toString();
+            if (!commandeById.containsKey(key)) continue;
+            if (alreadyAdded.contains(key)) continue; // ← skip duplicates
+
+            final cmd    = commandeById[key]!;
+            final demand = (cmd['capacite'] as num?)?.toInt()
+                ?? (cmd['quantity'] as num?)?.toInt()
+                ?? 0;
+
+            if (load + demand <= capacity) {
+              load += demand;
+              alreadyAdded.add(key);
+              orderedMongoIds.add(key);
+            } else {
+              print('[CAP] SKIP $key demand=$demand load=$load capacity=$capacity');
+            }
+          }
+          print('[CAP] route[$r] final load=$load / $capacity');
+        }
+
+        orderedMongoIds = alreadyAdded.toList(); // guaranteed unique
+        print('[CAP] orderedMongoIds: ${orderedMongoIds.length} / ${commandeById.length}');
+
         if (orderedMongoIds.isNotEmpty) {
           usedVrp = true;
         }
       }
-      _stopChauffeur.clear();
-      // Populate _stopChauffeur
-      if (vrpResult['error'] == null && vrpResult['routes'] != null) {
-        final routes = vrpResult['routes'] as List;
-        for (int r = 0; r < routes.length; r++) {
-          final routeObj     = routes[r];
-          final vrpIds       = (routeObj['route'] as List?) ?? [];
-          final nomChauffeur = _testChauffeurs.length > r
-              ? _testChauffeurs[r]['nom'].toString()
-              : (routeObj['conducteur_nom'] ?? 'Conducteur ${r + 1}').toString();
-          for (final vid in vrpIds) {
-            _stopChauffeur[vid.toString()] = nomChauffeur;
-          }
-        }
-      }
-
       if (!usedVrp) {
         _totalDistanceKm = null;
         _routeIsValid    = false;
@@ -1801,20 +1922,27 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         Colors.red.shade700,     Colors.teal.shade700,
       ];
 
+
+      // ── 2. Build stopsByChauffeur with round-robin fallback for routing only ──
       final Map<String, List<_RouteStop>> stopsByChauffeur = {};
-      for (final stop in stops) {
-        final nom = _stopChauffeur[stop.mongoId] ?? 'default';
+      for (int i = 0; i < stops.length; i++) {
+        final stop = stops[i];
+        final nom = _stopChauffeur[stop.mongoId]
+            ?? (_testChauffeurs.isNotEmpty
+                ? _testChauffeurs[i % _testChauffeurs.length]['nom'].toString()
+                : _myName);
+        _stopChauffeur.putIfAbsent(stop.mongoId, () => nom);
         stopsByChauffeur.putIfAbsent(nom, () => []).add(stop);
       }
 
-      final List<Polyline>   newPolylines    = [];
-      final List<LatLng>     fullRoutePoints = [];
-      double                 segmentDistKm  = 0;
-      final List<double>     legDistances   = [];
-      final List<double>     legDurations   = [];
-      int                    colorIdx       = 0;
+      // ── 3. Build polylines & collect leg distances ──
+      final List<Polyline> newPolylines    = [];
+      final List<LatLng>   fullRoutePoints = [];
+      double               segmentDistKm  = 0;
+      final List<double>   legDistances   = [];
+      final List<double>   legDurations   = [];
+      int                  colorIdx       = 0;
 
-      // FIX: reset _routePointsByChauffeur before rebuilding
       _routePointsByChauffeur = {};
 
       for (final entry in stopsByChauffeur.entries) {
@@ -1825,12 +1953,14 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
               (c) => c['nom'].toString() == nom,
           orElse: () => <String, Object>{},
         );
-        final double startLat = _testOrders.isEmpty
-            ? _currentPosition.latitude
-            : (chauffeurData['lat'] as num?)?.toDouble() ?? _currentPosition.latitude;
-        final double startLon = _testOrders.isEmpty
-            ? _currentPosition.longitude
-            : (chauffeurData['lon'] as num?)?.toDouble() ?? _currentPosition.longitude;
+        if (chauffeurData.isEmpty) {
+          _log('WARNING: no chauffeur found for nom="$nom", falling back to current position');
+        }
+
+        final double? chauffLat = (chauffeurData['lat'] as num?)?.toDouble();
+        final double? chauffLon = (chauffeurData['lon'] as num?)?.toDouble();
+        final double startLat   = chauffLat ?? _currentPosition.latitude;
+        final double startLon   = chauffLon ?? _currentPosition.longitude;
 
         final List<LatLng> chWaypoints = [
           LatLng(startLat, startLon),
@@ -1847,13 +1977,12 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             final pts = result['points'] as List<LatLng>;
             final d   = result['distanceKm']  as double? ?? 0;
             final dur = result['durationMin'] as double? ?? 0;
-
             if (routePoints.isNotEmpty && pts.isNotEmpty) {
               routePoints.addAll(pts.skip(1));
             } else {
               routePoints.addAll(pts);
             }
-            routeDist    += d;
+            routeDist += d;
             legDistances.add(d);
             legDurations.add(dur);
           } catch (e) {
@@ -1874,28 +2003,25 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             borderColor:       _isPreviewRoute
                 ? Colors.white.withOpacity(0.6)
                 : Colors.white,
-            isDotted:          _isPreviewRoute,
+            isDotted: _isPreviewRoute,
           ));
         }
 
-        // FIX: store per-chauffeur route ONCE, not twice
         _routePointsByChauffeur[nom] = List<LatLng>.from(routePoints);
         fullRoutePoints.addAll(routePoints);
         segmentDistKm += routeDist;
         colorIdx++;
       }
 
-      // Enrich stops with distances
+      // ── 4. Enrich stops with leg distances ──
       final Map<String, double> stopDistanceMap = {};
       final Map<String, double> stopDurationMap = {};
-
       int legIdx = 0;
       for (final entry in stopsByChauffeur.entries) {
-        final chauffStops = entry.value;
-        for (int s = 0; s < chauffStops.length; s++) {
+        for (final stop in entry.value) {
           if (legIdx < legDistances.length) {
-            stopDistanceMap[chauffStops[s].mongoId] = legDistances[legIdx];
-            stopDurationMap[chauffStops[s].mongoId] = legDurations[legIdx];
+            stopDistanceMap[stop.mongoId] = legDistances[legIdx];
+            stopDurationMap[stop.mongoId] = legDurations[legIdx];
           }
           legIdx++;
         }
@@ -1908,17 +2034,23 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         );
       }).toList();
 
-      // FIX: init orderStatus — keep existing status if already set, else 'pending'
+      // ── 5. Set orderStatus using vrpConfirmedIds (captured BEFORE round-robin) ──
       final enrichedIds = enrichedStops.map((s) => s.mongoId).toSet();
       _orderStatus.removeWhere((id, _) => !enrichedIds.contains(id));
-      for (final s in enrichedStops) {
-        _orderStatus.putIfAbsent(s.mongoId, () => 'pending');
-      }
 
-      // For real orders (no test orders), auto-accept
-      if (_testOrders.isEmpty) {
-        for (final s in enrichedStops) {
+      final vrpConfirmedIds = orderedMongoIds.toSet();
+      print('[DEBUG] vrpConfirmedIds count: ${vrpConfirmedIds.length}');
+      print('[DEBUG] enrichedStops count: ${enrichedStops.length}');
+
+      for (final s in enrichedStops) {
+        if (_testOrders.isEmpty) {
+          // Real orders: always accepted
           _orderStatus[s.mongoId] = 'accepted';
+        } else {
+          // Test orders: VRP-served → pending (user must manually accept)
+          //              VRP-unserved → pending (capacity exceeded)
+          // Never auto-accept, always use putIfAbsent to preserve user's previous choice
+          _orderStatus.putIfAbsent(s.mongoId, () => 'pending');
         }
       }
       if (_testOrders.isEmpty) {
@@ -1926,7 +2058,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           _stopChauffeur[s.mongoId] = _myName;
         }
       }
-
       setState(() {
         _polylines       = newPolylines;
         _markers         = _buildMarkers(enrichedStops);
@@ -2192,7 +2323,19 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const SizedBox(width: 40),
+                    Positioned(
+                      right: 16,
+                      top:   MediaQuery.of(context).padding.top + 160,
+                      child: FloatingActionButton(
+                        mini:            true,
+
+                        backgroundColor: Colors.white,
+                        onPressed:        _addMoreChauffeurs,
+                        child: Icon(Icons.person,
+                            color: isOnline ? const Color(0xFF1E3A8A) : Colors.grey),
+                      ),
+                    ),
+
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 10),
@@ -2204,6 +2347,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                             blurRadius: 8,
                             offset:     const Offset(0, 2))],
                       ),
+
                       child: Row(children: [
                         const Icon(Icons.local_shipping,
                             color: Color(0xFF1E3A8A), size: 24),
@@ -2225,8 +2369,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                           child: const Icon(Icons.edit,
                               size: 18, color: Colors.black54),
                         ),
+
                       ]),
                     ),
+
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
@@ -2244,16 +2390,17 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                           color: _gpsReady ? Colors.green : Colors.grey,
                           size: 20),
                     ),
+
                     const SizedBox(width: 8),
                     GestureDetector(
-                      onTap: () => setState(() => _showHeatmap = !_showHeatmap),
+    onTap: () => Navigator.push(context,
+    MaterialPageRoute(
+    builder: (_) => ConducteurInfoScreen())),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: _showHeatmap
-                              ? const Color(0xFF1E3A8A)
-                              : Colors.white,
+                          color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
                           boxShadow: [BoxShadow(
                             color:      Colors.black.withOpacity(0.1),
@@ -2261,10 +2408,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                           )],
                         ),
                         child: Icon(
-                          Icons.local_fire_department,
-                          color: _showHeatmap
-                              ? Colors.white
-                              : const Color(0xFF1E3A8A),
+                          Icons.info_outline,
                           size: 20,
                         ),
                       ),
@@ -2299,6 +2443,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 color: isOnline ? const Color(0xFF1E3A8A) : Colors.grey),
           ),
         ),
+
+
 
         if (isOnline && _optimizedStops.isNotEmpty)
           Positioned(

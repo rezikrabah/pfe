@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import '../services/api_service.dart';
 import '../gerant/profile_gerant.dart';
+import 'history_screen.dart';
 
 class ChauffeurScreen extends StatefulWidget {
   const ChauffeurScreen({Key? key}) : super(key: key);
@@ -105,6 +106,7 @@ class _ChauffeurScreenState extends State<ChauffeurScreen> {
     return Scaffold(
       backgroundColor: isDark ? Theme.of(context).scaffoldBackgroundColor : const Color(0xFFF0F4FF),
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         backgroundColor: isDark ? Theme.of(context).scaffoldBackgroundColor : const Color(0xFFF0F4FF),
         elevation: 0,
         leading: BackButton(color: isDark ? Colors.white : const Color(0xFF1A237E)),
@@ -221,6 +223,22 @@ class _ChauffeurScreenState extends State<ChauffeurScreen> {
               ]),
             ),
             Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey),
+            GestureDetector(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => HistoryScreen(
+                    chauffeurId: c['_id'] ?? c['id'], // ← pass driver ID
+                  ),
+                ),
+              ),
+              child: Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: isDark ? const Color(0xFF0D4D5E) : Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: isDark ? Colors.white12 : Colors.black12)),
+                child: const Icon(CupertinoIcons.cart_fill_badge_minus, color: Color(0xFF2979FF), size: 20),
+              ),
+            ),
           ]),
           if (isExpanded) ...[
             const SizedBox(height: 12),
