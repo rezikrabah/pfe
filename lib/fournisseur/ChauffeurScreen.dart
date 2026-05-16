@@ -68,35 +68,38 @@ class _ChauffeurScreenState extends State<ChauffeurScreen> {
 
     if (confirmed != true) return;
 
-    try {
-      // Remove from gerant's chauffeurs array using the user's _id
-      await ApiService.deleteChauffeur(chauffeur['_id'] ?? chauffeur['id']);
-
-      setState(() {
-        _chauffeurs.removeAt(index);
-        if (_expandedIndex == index) _expandedIndex = -1;
-        if (_expandedIndex > index) _expandedIndex--;
-      });
-
+    final result = await ApiService.deleteChauffeur(chauffeur['_id'] ?? chauffeur['id']);
+    print('DELETE RESULT: $result'); // ← add this
+    print('CHAUFFEUR ID: ${chauffeur['_id'] ?? chauffeur['id']}');
+    // ✅ Check for error before touching the UI
+    if (result.containsKey('error')) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Row(children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 18),
-            const SizedBox(width: 8),
-            Text('${chauffeur['prenom']} ${chauffeur['nom']} retiré'),
-          ]),
-          backgroundColor: const Color(0xFF2979FF),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Erreur lors de la suppression'),
+          content: Text(result['error']),
           backgroundColor: Colors.red,
         ));
       }
+      return;
+    }
+
+    // ✅ Only update UI after confirmed success
+    setState(() {
+      _chauffeurs.removeAt(index);
+      if (_expandedIndex == index) _expandedIndex = -1;
+      if (_expandedIndex > index) _expandedIndex--;
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Row(children: [
+          const Icon(Icons.check_circle, color: Colors.white, size: 18),
+          const SizedBox(width: 8),
+          Text('${chauffeur['prenom']} ${chauffeur['nom']} retiré'),
+        ]),
+        backgroundColor: const Color(0xFF2979FF),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
     }
   }
 

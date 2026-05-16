@@ -105,22 +105,24 @@ class ApiService {
     try {
       // ── Build index→originalId map BEFORE sending ──
       final Map<int, String> vrpIdToOriginalId = {};
+      final nChauffeurs = chauffeurs.length;
+
       final vrpCommandes = commandes.asMap().entries.map((e) {
         final i   = e.key;
         final c   = e.value;
-        final vid = i + 1;
+        final vid = i + 1 + nChauffeurs;   // ← offset to avoid collision
         vrpIdToOriginalId[vid] = (c['id'] ?? c['_id'] ?? '').toString();
         return {
           'id'         : vid,
-          'lat'        : (c['lat'] as num?)?.toDouble()      ?? 0.0,
-          'lon'        : (c['lon'] as num?)?.toDouble()      ?? 0.0,
+          'lat'        : (c['lat'] as num?)?.toDouble()   ?? 0.0,
+          'lon'        : (c['lon'] as num?)?.toDouble()   ?? 0.0,
           'demand'     : (c['demand'] as num?)?.toInt()
-              ?? (c['quantity'] as num?)?.toInt()    // fallback to quantity
+              ?? (c['quantity'] as num?)?.toInt()
               ?? 1,
           'gain'       : (c['gain'] as num?)?.toDouble()
               ?? (c['price'] as num?)?.toDouble()
               ?? 0.0,
-          'description': c['address']?.toString()            ?? 'Client ${i + 1}',
+          'description': c['address']?.toString()         ?? 'Client ${i + 1}',
         };
       }).toList();
 
@@ -131,12 +133,12 @@ class ApiService {
         {'id': 'depot', 'lat': depotLat, 'lon': depotLon},
         // ← add chauffeur positions
         ...chauffeurs.asMap().entries.map((e) => {
-          'id'  : 'chauffeur_${e.key}',
+          'id'  : '${e.key + 1}',
           'lat' : (e.value['lat'] as num).toDouble(),
           'lon' : (e.value['lon'] as num).toDouble(),
         }),
         ...commandes.asMap().entries.map((e) => {
-          'id'  : '${e.key + 1}',
+          'id'  : '${e.key + 1 + nChauffeurs}',
           'lat' : (e.value['lat'] as num?)?.toDouble() ?? 0.0,
           'lon' : (e.value['lon'] as num?)?.toDouble() ?? 0.0,
         }),
@@ -665,6 +667,55 @@ class ApiService {
     }
   }
 
+  /// Client submits a water shortage report
+  static Future<Map<String, dynamic>> addSignalement({
+    required String quartier,
+    required String commune,
+    required String niveau,       // 'legere' | 'moderee' | 'grave'
+    required int dureeNombre,
+    required String dureeUnite,
+    String commentaire = '',
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$baseUrl/api/signalements/add'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          'quartier':    quartier,
+          'commune':     commune,
+          'niveau':      niveau,
+          'dureeNombre': dureeNombre,
+          'dureeUnite':  dureeUnite,
+          'commentaire': commentaire,
+        }),
+      );
+      return _decode(res);
+    } on SocketException  { return {'error': 'Connection error.'}; }
+    on TimeoutException   { return {'error': 'Request timed out.'}; }
+    catch (e)             { return {'error': e.toString()}; }
+  }
+
+  /// Driver fetches all reports (with optional filters)
+  static Future<List<dynamic>> getSignalements({
+    String commune = 'Toutes',
+    String? niveau,
+    Duration? depuis,
+  }) async {
+    try {
+      final params = <String, String>{};
+      if (commune != 'Toutes') params['commune'] = commune;
+      if (niveau != null)      params['niveau']  = niveau;
+      if (depuis != null)      params['depuis']  = depuis.inMilliseconds.toString();
+
+      final uri = Uri.parse('$baseUrl/api/signalements')
+          .replace(queryParameters: params.isEmpty ? null : params);
+
+      final res = await http.get(uri, headers: _authHeaders);
+      return _decodeList(res);
+    } on SocketException { return []; }
+    on TimeoutException  { return []; }
+    catch (e)            { return []; }
+  }
   static Future<Map<String, dynamic>> addFournisseurInfo({
     required double quantiteEau,
     required List<String> wilayas,
@@ -1073,7 +1124,7 @@ class ApiService {
   static Future<Map<String, dynamic>> deleteChauffeur(String id) async {
     try {
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/chauffeurs/$id'),
+        Uri.parse('$baseUrl/api/fournisseurs/$id'),
         headers: _authHeaders,
       );
       return _decode(response);

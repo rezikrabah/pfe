@@ -52,6 +52,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   List<_RouteStop> _allStops = [];
   double _capacityLiters  = 0;
   bool   _loadingCapacity = true;
+  final Map<String, double> _chauffeurLoadL = {};
   int _nbTestVehicles = 1;
   List<Polyline> _polylines     = [];
   List<Marker>   _markers       = [];
@@ -61,7 +62,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   List<_RouteStop> _optimizedStops = [];
   double?          _totalDistanceKm;
   bool             _routeIsValid   = false;
-
+  Map<String, double> _chauffeurDistanceKm = {};
   List<Map<String, dynamic>> _testOrders = [];
   Map<String, bool> _stopAcceptance = {};
   // FIX: orderStatus tracks 'pending' | 'accepted' | 'rejected' per stop
@@ -301,6 +302,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ?? (_testChauffeurs.isNotEmpty
               ? _testChauffeurs[i % _testChauffeurs.length]['nom'].toString()
               : 'Conducteur 1');
+
       byChauffeur.putIfAbsent(nom, () => []).add(stop);
     }
 
@@ -340,11 +342,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                     final nom   = entry.key;
                     final stops = entry.value;
                     final color = chauffeurColors[nom] ?? Colors.grey;
-                    final totalKm  = stops.where((s) => s.distanceKm != null)
-                        .fold(0.0, (sum, s) => sum + s.distanceKm!);
+                    final totalKm = _chauffeurDistanceKm[nom] ?? 0.0;
                     final totalMin = stops.where((s) => s.durationMin != null)
                         .fold(0.0, (sum, s) => sum + s.durationMin!);
-                    final totalQuantity = stops.fold(0.0, (sum, s) => sum + s.quantity);
+                    final totalQuantity = _chauffeurLoadL[nom] ?? stops.fold(0.0, (sum, s) => sum! + s.quantity);
 
                     return ExpansionTile(
                       leading: Container(
@@ -355,7 +356,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                       title: Text(nom, style: const TextStyle(
                           fontSize: 13, fontWeight: FontWeight.bold)),
                       subtitle: Text(
-                        '${stops.length} arrêt(s) · ${totalKm.toStringAsFixed(1)} km · ${totalMin.round()} min · ${totalQuantity.toStringAsFixed(0)} L',
+                        '${stops.length} arrêt(s) · ${totalKm.toStringAsFixed(1)} km · ${totalMin.round()} min · ${totalQuantity?.toStringAsFixed(0)} L',
                         style: TextStyle(fontSize: 11, color: Colors.grey.shade900),
                       ),
 
@@ -1174,14 +1175,37 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
     final lastNames  = ['Benali', 'Meziane', 'Cherif', 'Mansouri', 'Ferhat', 'Rezik', 'Naoui'];
 
     final algerPositions = [
-      {'lat': 36.7372, 'lon': 3.0865},
-      {'lat': 36.7762, 'lon': 3.0865},
-      {'lat': 36.7372, 'lon': 3.0865},
-      {'lat': 36.7372, 'lon': 3.0865},
-      {'lat': 36.7372, 'lon': 3.0865},
-      {'lat': 36.7372, 'lon': 3.0865},
-      {'lat': 36.7372, 'lon': 3.0865},
-      {'lat': 36.7372, 'lon': 3.0865},
+      // Nord / Bord de mer
+      {'name': 'Aïn Benian',     'lat': 36.8017, 'lon': 2.9328},
+      {'name': 'Chéraga',        'lat': 36.7672, 'lon': 2.9594},
+      {'name': 'Dely Ibrahim',   'lat': 36.7530, 'lon': 3.0028},
+      {'name': 'El Biar',        'lat': 36.7656, 'lon': 3.0306},
+      {'name': 'Bouzaréah',      'lat': 36.7931, 'lon': 3.0169},
+      {'name': 'Ben Aknoun',     'lat': 36.7583, 'lon': 3.0278},
+
+      // Centre / Hauteurs
+      {'name': 'Hydra',          'lat': 36.7417, 'lon': 3.0472},
+      {'name': 'Bir Mourad Raïs','lat': 36.7317, 'lon': 3.0589},
+      {'name': 'Birkhadem',      'lat': 36.7147, 'lon': 3.0519},
+      {'name': 'El Achour',      'lat': 36.7133, 'lon': 2.9972},
+      {'name': 'Draria',         'lat': 36.6961, 'lon': 2.9825},
+      {'name': 'Souidania',      'lat': 36.7194, 'lon': 2.9542},
+
+      // Sud
+      {'name': 'Aïn Naadja',    'lat': 36.6958, 'lon': 3.0847},
+      {'name': 'Sidi Moussa',    'lat': 36.6589, 'lon': 3.1008},
+      {'name': 'Baraki',         'lat': 36.6764, 'lon': 3.0981},
+      {'name': 'Douéra',         'lat': 36.6736, 'lon': 2.9456},
+      {'name': 'Birtouta',       'lat': 36.6472, 'lon': 2.9878},
+      {'name': 'Saoula',         'lat': 36.6914, 'lon': 3.0156},
+
+      // Est
+      {'name': 'Kouba',          'lat': 36.7286, 'lon': 3.0933},
+      {'name': 'Hussein Dey',    'lat': 36.7306, 'lon': 3.1011},
+      {'name': 'El Harrach',     'lat': 36.7150, 'lon': 3.1100},
+      {'name': 'Bachdjarah',     'lat': 36.7183, 'lon': 3.1017},
+      {'name': 'Oued Smar',      'lat': 36.7089, 'lon': 3.1383},
+      {'name': 'Dar El Beïda',   'lat': 36.7197, 'lon': 3.1553},
     ];
 
     // Shuffle both lists and pair them by index — guarantees unique full names
@@ -1762,6 +1786,15 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         print('[DEBUG] unserved raw: ${vrpResult['unserved']}');
         print('[DEBUG] unserved_original_ids: ${vrpResult['unserved_original_ids']}');
         _totalDistanceKm = (vrpResult['distance_totale_km'] as num?)?.toDouble();
+        _chauffeurDistanceKm = {
+          for (final r in (vrpResult['routes'] as List? ?? []))
+            (r['conducteur_nom']?.toString() ?? ''): (r['distance_km'] as num?)?.toDouble() ?? 0.0,
+        };
+        print('[DISTANCE] _totalDistanceKm set to: $_totalDistanceKm');
+        print('[DISTANCE] per-route breakdown:');
+        for (final r in (vrpResult['routes'] as List? ?? [])) {
+          print('  → ${r['conducteur_nom']}: ${r['distance_km']} km | orders: ${(r['route'] as List?)?.length}');
+        }
         _routeIsValid    = vrpResult['valide'] as bool? ?? false;
 
         // Get unserved IDs remapped to original gen_ IDs by ApiService
@@ -1801,6 +1834,11 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       if (vrpResult['error'] == null && vrpResult['routes'] != null) {
         final routes = vrpResult['routes'] as List;
         _totalDistanceKm = (vrpResult['distance_totale_km'] as num?)?.toDouble();
+        print('[DISTANCE] _totalDistanceKm set to: $_totalDistanceKm');
+        print('[DISTANCE] per-route breakdown:');
+        for (final r in (vrpResult['routes'] as List? ?? [])) {
+          print('  → ${r['conducteur_nom']}: ${r['distance_km']} km | orders: ${(r['route'] as List?)?.length}');
+        }
         _routeIsValid    = vrpResult['valide'] as bool? ?? false;
 
         print('[DEBUG] entering VRP parse block, routes: ${routes.length}');
@@ -1828,6 +1866,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           int load = 0;
           print('[CAP] route[$r] chauffeur=$conducteurNom capacity=$capacity');
 
+
           for (final vid in vrpIds) {
             final key = vid.toString();
             if (!commandeById.containsKey(key)) continue;
@@ -1842,15 +1881,19 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
               load += demand;
               alreadyAdded.add(key);
               orderedMongoIds.add(key);
+              _stopChauffeur[key] = conducteurNom;
+              _chauffeurLoadL[conducteurNom] = (_chauffeurLoadL[conducteurNom] ?? 0) + demand;
             } else {
               print('[CAP] SKIP $key demand=$demand load=$load capacity=$capacity');
             }
           }
           print('[CAP] route[$r] final load=$load / $capacity');
+
         }
 
         orderedMongoIds = alreadyAdded.toList(); // guaranteed unique
         print('[CAP] orderedMongoIds: ${orderedMongoIds.length} / ${commandeById.length}');
+
 
         if (orderedMongoIds.isNotEmpty) {
           usedVrp = true;
@@ -1927,10 +1970,12 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       final Map<String, List<_RouteStop>> stopsByChauffeur = {};
       for (int i = 0; i < stops.length; i++) {
         final stop = stops[i];
-        final nom = _stopChauffeur[stop.mongoId]
-            ?? (_testChauffeurs.isNotEmpty
-                ? _testChauffeurs[i % _testChauffeurs.length]['nom'].toString()
-                : _myName);
+        final nom = _stopChauffeur[stop.mongoId] ?? (() {
+          print('[WARN] stop ${stop.mongoId} (${stop.clientName}) has no chauffeur mapping!');
+          return _testChauffeurs.isNotEmpty
+              ? _testChauffeurs[0]['nom'].toString()
+              : _myName;
+        })();
         _stopChauffeur.putIfAbsent(stop.mongoId, () => nom);
         stopsByChauffeur.putIfAbsent(nom, () => []).add(stop);
       }
@@ -1938,13 +1983,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       // ── 3. Build polylines & collect leg distances ──
       final List<Polyline> newPolylines    = [];
       final List<LatLng>   fullRoutePoints = [];
-      double               segmentDistKm  = 0;
       final List<double>   legDistances   = [];
       final List<double>   legDurations   = [];
       int                  colorIdx       = 0;
 
       _routePointsByChauffeur = {};
-
+      final Map<String, double> stopDistanceMap = {};
+      final Map<String, double> stopDurationMap = {};
       for (final entry in stopsByChauffeur.entries) {
         final nom         = entry.key;
         final chauffStops = entry.value;
@@ -1970,25 +2015,27 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         final List<LatLng> routePoints = [];
         double routeDist = 0;
 
-        for (int i = 0; i < chWaypoints.length - 1; i++) {
+        for (int i = 0; i < chauffStops.length; i++) {
           try {
-            final result = await OsrmService.getRouteWithMetrics(
-                chWaypoints[i], chWaypoints[i + 1]);
+            final from = i == 0 ? LatLng(startLat, startLon) : chauffStops[i - 1].position;
+            final to   = chauffStops[i].position;
+            final result = await OsrmService.getRouteWithMetrics(from, to);
             final pts = result['points'] as List<LatLng>;
             final d   = result['distanceKm']  as double? ?? 0;
             final dur = result['durationMin'] as double? ?? 0;
+
+            stopDistanceMap[chauffStops[i].mongoId] = d;
+            stopDurationMap[chauffStops[i].mongoId] = dur;
+
             if (routePoints.isNotEmpty && pts.isNotEmpty) {
               routePoints.addAll(pts.skip(1));
             } else {
               routePoints.addAll(pts);
             }
-            routeDist += d;
-            legDistances.add(d);
-            legDurations.add(dur);
           } catch (e) {
             _log('  OSRM leg error: $e');
-            legDistances.add(0);
-            legDurations.add(0);
+            stopDistanceMap[chauffStops[i].mongoId] = 0;
+            stopDurationMap[chauffStops[i].mongoId] = 0;
           }
         }
 
@@ -2009,13 +2056,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
 
         _routePointsByChauffeur[nom] = List<LatLng>.from(routePoints);
         fullRoutePoints.addAll(routePoints);
-        segmentDistKm += routeDist;
         colorIdx++;
       }
 
-      // ── 4. Enrich stops with leg distances ──
-      final Map<String, double> stopDistanceMap = {};
-      final Map<String, double> stopDurationMap = {};
       int legIdx = 0;
       for (final entry in stopsByChauffeur.entries) {
         for (final stop in entry.value) {
@@ -2063,7 +2106,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         _markers         = _buildMarkers(enrichedStops);
         _optimizedStops  = enrichedStops;
         _allStops        = enrichedStops;
-        _totalDistanceKm = segmentDistKm;
+        _totalDistanceKm = (vrpResult['distance_totale_km'] as num?)?.toDouble();
         _fullRoutePoints = List<LatLng>.from(fullRoutePoints);
         _loadingRoutes   = false;
       });

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/api_service.dart';
+
 // ─────────────────────────────────────────
 //  MODÈLES
 // ─────────────────────────────────────────
@@ -65,64 +67,6 @@ class SignalementInfo {
 }
 
 // ─────────────────────────────────────────
-//  DONNÉES FACTICES
-// ─────────────────────────────────────────
-final List<SignalementInfo> _donneesFactices = [
-  SignalementInfo(
-    quartier: 'Cité des fleurs',
-    commune: "M'Sila",
-    niveau: NiveauPenurie.grave,
-    dureeNombre: 4,
-    dureeUnite: 'jours',
-    commentaire: "L'eau coupe chaque soir à partir de 18h. Plusieurs familles affectées.",
-    dateSignalement: DateTime.now().subtract(const Duration(minutes: 12)),
-    isNew: true,
-    nbCommandes: 23,
-  ),
-  SignalementInfo(
-    quartier: 'Bloc B - Zone industrielle',
-    commune: 'El Hamel',
-    niveau: NiveauPenurie.moderee,
-    dureeNombre: 2,
-    dureeUnite: 'jours',
-    commentaire: 'Pression très faible depuis lundi matin.',
-    dateSignalement: DateTime.now().subtract(const Duration(hours: 1)),
-    isNew: true,
-    nbCommandes: 17,
-  ),
-  SignalementInfo(
-    quartier: 'Rue des Oliviers',
-    commune: "M'Sila",
-    niveau: NiveauPenurie.legere,
-    dureeNombre: 5,
-    dureeUnite: 'heures',
-    commentaire: '',
-    dateSignalement: DateTime.now().subtract(const Duration(hours: 3)),
-    nbCommandes: 8,
-  ),
-  SignalementInfo(
-    quartier: 'Hai El Wiam',
-    commune: 'Boussaâda',
-    niveau: NiveauPenurie.grave,
-    dureeNombre: 1,
-    dureeUnite: 'semaines',
-    commentaire: 'Coupure totale depuis samedi. Urgence.',
-    dateSignalement: DateTime.now().subtract(const Duration(hours: 5)),
-    nbCommandes: 31,
-  ),
-  SignalementInfo(
-    quartier: 'Cité 300 Logements',
-    commune: "M'Sila",
-    niveau: NiveauPenurie.moderee,
-    dureeNombre: 1,
-    dureeUnite: 'jours',
-    commentaire: 'Eau disponible seulement la nuit.',
-    dateSignalement: DateTime.now().subtract(const Duration(hours: 8)),
-    nbCommandes: 14,
-  ),
-];
-
-// ─────────────────────────────────────────
 //  ÉCRAN CONDUCTEUR
 // ─────────────────────────────────────────
 class ConducteurInfoScreen extends StatefulWidget {
@@ -135,14 +79,8 @@ class ConducteurInfoScreen extends StatefulWidget {
 class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-
-  // Filtres
-  String _filtreCommune = 'Toutes';
-  NiveauPenurie? _filtreNiveau;
-  String _filtreDate = 'Toutes';
-
   final List<String> _communes = [
-    'Toutes' ,
+    'Toutes',
     '01 - Adrar', '02 - Chlef', '03 - Laghouat', '04 - Oum El Bouaghi',
     '05 - Batna', '06 - Béjaïa', '07 - Biskra', '08 - Béchar',
     '09 - Blida', '10 - Bouira', '11 - Tamanrasset', '12 - Tébessa',
@@ -159,6 +97,14 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
     '52 - Béni Abbès', '53 - In Salah', '54 - In Guezzam', '55 - Touggourt',
     '56 - Djanet', '57 - El M\'Ghair', '58 - El Meniaa',
   ];
+  // Filtres
+  String _filtreCommune = 'Toutes';
+  NiveauPenurie? _filtreNiveau;
+  String _filtreDate = 'Toutes';
+
+  List<SignalementInfo> _signalements = [];
+  bool _loading = true;
+
   final List<String> _dates = [
     'Toutes',
     'Dernière heure',
@@ -170,39 +116,57 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadSignalements();
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+  Future<void> _loadSignalements() async {
+    setState(() => _loading = true);
+
+    Duration? depuis;
+    if (_filtreDate == 'Dernière heure') depuis = const Duration(hours: 1);
+    if (_filtreDate == 'Aujourd\'hui')   depuis = const Duration(hours: 24);
+    if (_filtreDate == 'Cette semaine')  depuis = const Duration(days: 7);
+
+    final raw = await ApiService.getSignalements(
+      commune: _filtreCommune,
+      niveau:  _filtreNiveau?.name,
+      depuis:  depuis,
+    );
+    print('[SIGNALEMENTS] count: ${raw.length}');
+    if (raw.isNotEmpty) print('[SIGNALEMENTS] first item: ${raw.first}');
+    setState(() {
+      _signalements = raw.map((json) => SignalementInfo(
+        quartier:        json['quartier']    ?? '',
+        commune:         json['commune']     ?? '',
+        niveau:          _parseNiveau(json['niveau']),
+        dureeNombre:     (json['dureeNombre'] as num?)?.toInt() ?? 1,
+        dureeUnite:      json['dureeUnite']  ?? 'jours',
+        commentaire:     json['commentaire'] ?? '',
+        dateSignalement: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
+        isNew: DateTime.now().difference(
+            DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now()
+        ).inMinutes < 30,
+        nbCommandes: (json['nbCommandes'] as num?)?.toInt() ?? 0,
+      )).toList();
+      _loading = false;
+    });
   }
 
-  List<SignalementInfo> get _signalementsFiltres {
-    return _donneesFactices.where((s) {
-      if (_filtreCommune != 'Toutes' && s.commune != _filtreCommune) {
-        return false;
-      }
-      if (_filtreNiveau != null && s.niveau != _filtreNiveau) return false;
-      final now = DateTime.now();
-      if (_filtreDate == 'Dernière heure' &&
-          now.difference(s.dateSignalement).inMinutes > 60) return false;
-      if (_filtreDate == 'Aujourd\'hui' &&
-          now.difference(s.dateSignalement).inHours > 24) return false;
-      if (_filtreDate == 'Cette semaine' &&
-          now.difference(s.dateSignalement).inDays > 7) return false;
-      return true;
-    }).toList();
+  NiveauPenurie _parseNiveau(String? s) {
+    switch (s) {
+      case 'moderee': return NiveauPenurie.moderee;
+      case 'grave':   return NiveauPenurie.grave;
+      default:        return NiveauPenurie.legere;
+    }
   }
 
-  int get _totalAlertes => _donneesFactices.length;
-  int get _nouvellesAlertes =>
-      _donneesFactices.where((s) => s.isNew).length;
-  int get _totalCommandes =>
-      _donneesFactices.fold(0, (sum, s) => sum + s.nbCommandes);
-
+  // Use _signalements instead of _donneesFactices everywhere:
+  List<SignalementInfo> get _signalementsFiltres => _signalements;
+  int get _totalAlertes    => _signalements.length;
+  int get _nouvellesAlertes => _signalements.where((s) => s.isNew).length;
+  int get _totalCommandes  => _signalements.fold(0, (sum, s) => sum + s.nbCommandes);
   List<SignalementInfo> get _zonesTriees {
-    final list = List<SignalementInfo>.from(_donneesFactices);
+    final list = List<SignalementInfo>.from(_signalements);
     list.sort((a, b) => b.nbCommandes.compareTo(a.nbCommandes));
     return list;
   }
@@ -275,12 +239,16 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
           ),
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildSignalements(),
-          _buildStatistiques(),
-        ],
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(controller: _tabController, children: [
+        _buildSignalements(),
+        _buildStatistiques(),
+      ]),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _loadSignalements,
+        backgroundColor: const Color(0xFF185FA5),
+        child: const Icon(Icons.refresh, color: Colors.white),
       ),
     );
   }
@@ -330,7 +298,10 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
                   label: 'Commune',
                   value: _filtreCommune,
                   items: _communes,
-                  onChanged: (v) => setState(() => _filtreCommune = v!),
+                  onChanged: (v) {
+                    setState(() => _filtreCommune = v!);
+                    _loadSignalements();
+                  },
                 ),
               ),
               const SizedBox(width: 8),
@@ -339,7 +310,10 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
                   label: 'Date',
                   value: _filtreDate,
                   items: _dates,
-                  onChanged: (v) => setState(() => _filtreDate = v!),
+                  onChanged: (v) {
+                    setState(() => _filtreDate = v!);
+                    _loadSignalements();
+                  },
                 ),
               ),
             ],
@@ -350,7 +324,10 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
               _FiltreChip(
                 label: 'Tous',
                 selected: _filtreNiveau == null,
-                onTap: () => setState(() => _filtreNiveau = null),
+                onTap: () {
+                  setState(() => _filtreNiveau = null);
+                  _loadSignalements();
+                },
                 color: const Color(0xFF444444),
                 colorFond: const Color(0xFFF0F0F0),
               ),
@@ -361,7 +338,10 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
                   child: _FiltreChip(
                     label: n.label,
                     selected: _filtreNiveau == n,
-                    onTap: () => setState(() => _filtreNiveau = n),
+                    onTap: () {
+                      setState(() => _filtreNiveau = n);
+                      _loadSignalements();
+                    },
                     color: n.couleur,
                     colorFond: n.couleurFond,
                   ),
@@ -390,12 +370,26 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
     );
   }
 
-  // ── ONGLET STATISTIQUES ──────────────────
   Widget _buildStatistiques() {
+    if (_signalements.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.info_outline, size: 48, color: Color(0xFFCCCCCC)),
+            SizedBox(height: 12),
+            Text(
+              'Aucun signalement reçu',
+              style: TextStyle(color: Color(0xFF888888), fontSize: 15),
+            ),
+          ],
+        ),
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Cartes résumé
         Row(
           children: [
             Expanded(
@@ -430,31 +424,39 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
           ],
         ),
         const SizedBox(height: 20),
-
-        // Répartition par niveau
         const _SectionHeader(title: 'Répartition par niveau'),
         const SizedBox(height: 8),
         _buildRepartitionNiveaux(),
         const SizedBox(height: 20),
-
-        // Zones les plus demandées
         const _SectionHeader(title: 'Zones les plus demandées'),
         const SizedBox(height: 8),
         _buildZonesClassement(),
         const SizedBox(height: 20),
-
-        // Alertes récentes
         const _SectionHeader(title: 'Alertes récentes'),
         const SizedBox(height: 8),
-        ..._donneesFactices
+
+        // ── FIXED: use _signalements not _donneesFactices ──
+        ..._signalements
             .where((s) => s.isNew)
             .map((s) => _AlerteRecente(signalement: s)),
+
+        if (_signalements.where((s) => s.isNew).isEmpty)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Aucune alerte récente',
+                style: TextStyle(color: Color(0xFF888888), fontSize: 14),
+              ),
+            ),
+          ),
       ],
     );
   }
 
   Widget _buildRepartitionNiveaux() {
-    final total = _donneesFactices.length;
+    // ── FIXED: use _signalements not _donneesFactices ──
+    final total = _signalements.length;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -464,8 +466,7 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: NiveauPenurie.values.map((n) {
-          final count =
-              _donneesFactices.where((s) => s.niveau == n).length;
+          final count = _signalements.where((s) => s.niveau == n).length;
           final pct = total > 0 ? count / total : 0.0;
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -484,8 +485,7 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
                   width: 70,
                   child: Text(
                     n.label,
-                    style: const TextStyle(
-                        fontSize: 13, color: Color(0xFF444444)),
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF444444)),
                   ),
                 ),
                 Expanded(
@@ -522,6 +522,22 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
 
   Widget _buildZonesClassement() {
     final zones = _zonesTriees;
+    if (zones.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE8E8E8), width: 0.5),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: const Center(
+          child: Text(
+            'Aucune donnée disponible',
+            style: TextStyle(color: Color(0xFF888888), fontSize: 14),
+          ),
+        ),
+      );
+    }
     final max = zones.first.nbCommandes;
     return Container(
       decoration: BoxDecoration(
@@ -618,7 +634,6 @@ class _ConducteurInfoScreenState extends State<ConducteurInfoScreen>
 
 // ─────────────────────────────────────────
 //  WIDGETS RÉUTILISABLES
-// ─────────────────────────────────────────
 class _SignalementCard extends StatelessWidget {
   final SignalementInfo signalement;
 
@@ -639,125 +654,144 @@ class _SignalementCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border(
-          left: BorderSide(color: s.niveau.couleur, width: 3),
-          top: const BorderSide(color: Color(0xFFE8E8E8), width: 0.5),
-          right: const BorderSide(color: Color(0xFFE8E8E8), width: 0.5),
-          bottom: const BorderSide(color: Color(0xFFE8E8E8), width: 0.5),
-        ),
+        border: Border.all(color: const Color(0xFFE8E8E8), width: 0.5),
       ),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Row(
+      clipBehavior: Clip.antiAlias, // ← clips the inner accent to the radius
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Colored left accent bar ──
+            Container(
+              width: 4,
+              color: s.niveau.couleur,
+            ),
+            // ── Card content ──
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      s.quartier,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF1A1A1A),
-                      ),
-                    ),
-                    if (s.isNew) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFCEBEB),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Text(
-                          'Nouveau',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFFA32D2D),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 6,
+                            children: [
+                              Text(
+                                s.quartier,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF1A1A1A),
+                                ),
+                              ),
+                              if (s.isNew)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFCEBEB),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Text(
+                                    'Nouveau',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFFA32D2D),
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: s.niveau.couleurFond,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            s.niveau.label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: s.niveau.couleur,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.location_on_outlined,
+                            size: 13, color: Color(0xFF888888)),
+                        const SizedBox(width: 3),
+                        Text(
+                          s.commune,
+                          style: const TextStyle(
+                              fontSize: 12, color: Color(0xFF888888)),
+                        ),
+                        const SizedBox(width: 10),
+                        const Icon(Icons.access_time_outlined,
+                            size: 13, color: Color(0xFF888888)),
+                        const SizedBox(width: 3),
+                        Text(
+                          _formatTemps(s.dateSignalement),
+                          style: const TextStyle(
+                              fontSize: 12, color: Color(0xFF888888)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.water_drop_outlined,
+                              size: 13, color: Color(0xFF185FA5)),
+                          const SizedBox(width: 5),
+                          Text(
+                            'Sans eau depuis : ${s.dureeNombre} ${s.dureeUnite}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF185FA5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (s.commentaire.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        s.commentaire,
+                        style: const TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF555555),
+                            height: 1.4),
                       ),
                     ],
                   ],
                 ),
               ),
-              Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: s.niveau.couleurFond,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  s.niveau.label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: s.niveau.couleur,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              const Icon(Icons.location_on_outlined,
-                  size: 13, color: Color(0xFF888888)),
-              const SizedBox(width: 3),
-              Text(
-                s.commune,
-                style: const TextStyle(
-                    fontSize: 12, color: Color(0xFF888888)),
-              ),
-              const SizedBox(width: 10),
-              const Icon(Icons.access_time_outlined,
-                  size: 13, color: Color(0xFF888888)),
-              const SizedBox(width: 3),
-              Text(
-                _formatTemps(s.dateSignalement),
-                style: const TextStyle(
-                    fontSize: 12, color: Color(0xFF888888)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.water_drop_outlined,
-                    size: 13, color: Color(0xFF185FA5)),
-                const SizedBox(width: 5),
-                Text(
-                  'Sans eau depuis : ${s.dureeNombre} ${s.dureeUnite}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF185FA5),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (s.commentaire.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              s.commentaire,
-              style: const TextStyle(
-                  fontSize: 13, color: Color(0xFF555555), height: 1.4),
             ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -925,7 +959,6 @@ class _FiltreChip extends StatelessWidget {
 
 class _AlerteRecente extends StatelessWidget {
   final SignalementInfo signalement;
-
   const _AlerteRecente({required this.signalement});
 
   @override
@@ -933,55 +966,59 @@ class _AlerteRecente extends StatelessWidget {
     final s = signalement;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border(
-          left: BorderSide(color: s.niveau.couleur, width: 3),
-          top: const BorderSide(color: Color(0xFFE8E8E8), width: 0.5),
-          right: const BorderSide(color: Color(0xFFE8E8E8), width: 0.5),
-          bottom: const BorderSide(color: Color(0xFFE8E8E8), width: 0.5),
-        ),
+        border: Border.all(color: const Color(0xFFE8E8E8), width: 0.5),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 9,
-            height: 9,
-            decoration: BoxDecoration(
-              color: s.niveau.couleur,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              '${s.quartier} — ${s.commune}',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF1A1A1A),
+      clipBehavior: Clip.antiAlias, // ← key fix
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Colored left accent ──
+            Container(width: 3, color: s.niveau.couleur),
+            const SizedBox(width: 10),
+            // ── Content ──
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${s.quartier} — ${s.commune}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF1A1A1A),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: s.niveau.couleurFond,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        s.niveau.label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: s.niveau.couleur,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                ),
               ),
             ),
-          ),
-          Container(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: s.niveau.couleurFond,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              s.niveau.label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: s.niveau.couleur,
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

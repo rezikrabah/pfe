@@ -45,7 +45,30 @@ class AdminApi {
     'Content-Type': 'application/json',
     'Authorization': 'Bearer ${AdminToken.value ?? ""}',
   };
+  static Future<bool> _post(String path, {Map<String, dynamic>? body}) async {
+    try {
+      final r = await http
+          .post(Uri.parse('$_base$path'),
+          headers: _h,
+          body: body != null ? jsonEncode(body) : null)
+          .timeout(const Duration(seconds: 15));
+      return r.statusCode == 200 || r.statusCode == 201;
+    } catch (_) {
+      return false;
+    }
+  }
 
+  static Future<bool> sendSignalement({
+    required String targetName,
+    required String targetType,
+    required String raison,
+    String message = '',
+  }) => _post('/api/admin/signalement', body: {
+    'targetName': targetName,
+    'targetType': targetType,
+    'raison':     raison,
+    'message':    message,
+  });
   // ── helper: safe GET that returns List ──
   static Future<List<dynamic>> _getList(String path) async {
     try {
@@ -274,13 +297,26 @@ void showSignalementDialog(BuildContext context, {String? defaultTarget}) {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () {
+                  onPressed: () async {
+                    if (selectedRaison == null && messageCtrl.text.trim().isEmpty) return;
+
                     Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(
-                          'Signalement envoyé à ${targetCtrl.text.isNotEmpty ? targetCtrl.text : targetType}'),
-                      backgroundColor: Colors.red.shade700,
-                    ));
+
+                    final ok = await AdminApi.sendSignalement(
+                      targetName: targetCtrl.text.isNotEmpty ? targetCtrl.text : targetType,
+                      targetType: targetType,
+                      raison:     selectedRaison ?? 'Autre',
+                      message:    messageCtrl.text.trim(),
+                    );
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(ok
+                            ? 'Signalement envoyé à ${targetCtrl.text.isNotEmpty ? targetCtrl.text : targetType}'
+                            : 'Erreur lors de l\'envoi'),
+                        backgroundColor: ok ? Colors.red.shade700 : Colors.grey,
+                      ));
+                    }
                   },
                   icon: const Icon(Icons.send),
                   label: const Text('Envoyer le signalement'),
@@ -288,8 +324,7 @@ void showSignalementDialog(BuildContext context, {String? defaultTarget}) {
                     backgroundColor: Colors.red.shade700,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
               ),

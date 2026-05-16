@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/api_service.dart';
+
 // ─────────────────────────────────────────
 //  MODÈLE
 // ─────────────────────────────────────────
@@ -82,16 +84,40 @@ class _ClientInfoScreenState extends State<ClientInfoScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    if (_formKey.currentState!.validate() && _niveauSelectionne != null) {
-      setState(() => _submitted = true);
-    } else if (_niveauSelectionne == null) {
+  void _submit() async {
+    if (!_formKey.currentState!.validate() || _niveauSelectionne == null) {
+      if (_niveauSelectionne == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Veuillez sélectionner un niveau de pénurie.'),
+            backgroundColor: Color(0xFFA32D2D),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Map enum → string the backend expects
+    final niveauStr = _niveauSelectionne!.name; // 'legere' | 'moderee' | 'grave'
+
+    final result = await ApiService.addSignalement(
+      quartier:    _quartierCtrl.text.trim(),
+      commune:     _communeCtrl.text.trim(),
+      niveau:      niveauStr,
+      dureeNombre: _dureeNombre,
+      dureeUnite:  _dureeUnite,
+      commentaire: _commentaireCtrl.text.trim(),
+    );
+
+    if (result['error'] != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Veuillez sélectionner un niveau de pénurie.'),
-          backgroundColor: Color(0xFFA32D2D),
+        SnackBar(
+          content: Text('Erreur : ${result['error']}'),
+          backgroundColor: const Color(0xFFA32D2D),
         ),
       );
+    } else {
+      setState(() => _submitted = true);
     }
   }
 
