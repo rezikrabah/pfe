@@ -151,6 +151,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             'rawStatus':  rawStatus,
             'lat':        lat,
             'lon':        lon,
+            'prixFourchette': e['prixFourchette'],
           };
 
           if (existing.isEmpty) {
@@ -891,6 +892,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
               _buildInfoChip(Icons.timer, '${order['duration']} min', Colors.purple),
               const SizedBox(width: 6),
               _buildInfoChip(Icons.payments, '${order['price']} DA', Colors.green),
+              const SizedBox(width: 6),
+              if (order['prixFourchette'] != null)
+                _buildInfoChip(Icons.price_change, '${order['prixFourchette']}', Colors.teal),
             ]),
           ),
 

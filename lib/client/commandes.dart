@@ -338,17 +338,31 @@ class _CommandesState extends State<commandes> {
     });
   }
 
+  bool get _canConfirm =>
+      selectedPosition != null &&
+          selectedVolume != null &&
+          selectedWilaya != null &&
+          selectedPriceRange != null;  // ← add this
+
+// Fix _confirmOrder to pass the price range
   Future<void> _confirmOrder() async {
     if (!_canConfirm) return;
     setState(() => _submitting = true);
     try {
       final demand = int.tryParse(selectedVolume!.replaceAll('L', '')) ?? 0;
+
+      // Parse the min price from the range string, e.g. "2000-3000 DA" → 2000.0
+      final prixNum = double.tryParse(
+        selectedPriceRange!.replaceAll(RegExp(r'[^0-9]'), '').substring(0, 4),
+      ) ?? demand.toDouble() * 2;
+
       final result = await ApiService.addCommande(
         capacite: demand.toDouble(),
-        prix: demand.toDouble() * 2,
+        prix: prixNum,
         lat: _selectedLat,
         lon: _selectedLon,
-        wilaya: selectedWilaya!,        // ← pass wilaya, not fournisseurId
+        wilaya: selectedWilaya!,
+        prixFourchette: selectedPriceRange!, // ← add this param
       );
 
       if (mounted && result['error'] == null) {
@@ -381,7 +395,6 @@ class _CommandesState extends State<commandes> {
 
   void _showError(String msg) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red)); }
 
-  bool get _canConfirm =>  selectedPosition != null && selectedVolume != null && selectedWilaya != null;
 
   @override
   Widget build(BuildContext context) {

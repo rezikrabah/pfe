@@ -144,15 +144,14 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
 
               // ── Logo ──────────────────────────────
               CircleAvatar(
-                radius: screenWidth * 0.1,
+                radius: screenWidth * 0.11,
                 backgroundColor: Colors.white,
                 child: Padding(
-                  padding: EdgeInsets.all(screenWidth * 0.02),
-                  child: const Image(
-                    image: CachedNetworkImageProvider(
-                      'https://img.freepik.com/premium-vector/water-vector-logo-design-white-background_1277164-15228.jpg',
-                    ),
-                  ),
+                  padding: EdgeInsets.all(screenWidth * 0.01),
+                  child:   CircleAvatar(
+                  radius: screenWidth * 0.1,
+                  backgroundImage: const AssetImage('assets/app.png'),
+                ),
                 ),
               ),
 

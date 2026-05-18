@@ -719,6 +719,9 @@ class ApiService {
   static Future<Map<String, dynamic>> addFournisseurInfo({
     required double quantiteEau,
     required List<String> wilayas,
+    String? numeroPremit,
+    String? abonnement,
+    String? refPaiement,
   }) async {
     try {
       final response = await http.post(
@@ -873,6 +876,7 @@ class ApiService {
     required double prix,
     double? lat,
     double? lon,
+    String? prixFourchette,
     required String wilaya,
   }) async {
     try {
@@ -885,7 +889,8 @@ class ApiService {
           'wilaya': wilaya,          // ← add this
           if (lat != null) 'lat': lat,
           if (lon != null) 'lon': lon,
-          // ← remove the fournisseurId line entirely
+          if (prixFourchette != null) 'prixFourchette': prixFourchette,
+
         }),
       );
       return _decode(response);

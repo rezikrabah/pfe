@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'Loginpage.dart';
 
@@ -57,6 +59,20 @@ class AdminApi {
       return false;
     }
   }
+
+// À ajouter dans AdminApi quand tu veux l'interface abonnements
+  static Future<List<dynamic>> getAbonnements() => _getList('/api/admin/abonnements');
+  static Future<List<dynamic>> getAbonnementsExpiringSoon({int days = 7}) =>
+      _getList('/api/admin/abonnements/expiring-soon?days=$days');
+  static Future<bool> confirmerAbonnement(String userId, {String? planOverride}) =>
+      _put('/api/admin/abonnements/$userId/confirmer',
+          body: planOverride != null ? {'planOverride': planOverride} : {});
+  static Future<bool> refuserAbonnement(String userId, {String? raison}) =>
+      _put('/api/admin/abonnements/$userId/refuser',
+          body: raison != null ? {'raison': raison} : {});
+  static Future<bool> expirerAbonnement(String userId) =>
+      _put('/api/admin/abonnements/$userId/expirer');
+
 
   static Future<bool> sendSignalement({
     required String targetName,
@@ -349,6 +365,8 @@ class HomeScreen extends StatelessWidget {
     {'title': 'Notes & avis',         'icon': Icons.star_outline,           'color': Colors.amber,  'screen': 'reviews'},
     {'title': "Journal d'activité",   'icon': Icons.history_outlined,       'color': Colors.teal,   'screen': 'logs'},
     {'title': 'Paramètres',           'icon': Icons.settings_outlined,      'color': Colors.grey,   'screen': 'settings'},
+    {'title': 'Abonnements', 'icon': Icons.card_membership_outlined,
+      'color': Colors.indigo, 'screen': 'abonnements'},
   ];
 
   @override
@@ -441,7 +459,9 @@ class HomeScreen extends StatelessWidget {
       case 'reviews':  return const ReviewsScreen();
       case 'logs':     return const LogsScreen();
       case 'settings': return const SettingsScreen();
+      case 'abonnements': return const AbonnementsScreen();
       default:         return SectionScreen(title: title);
+
     }
   }
 }
@@ -2645,4 +2665,1241 @@ class SectionScreen extends StatelessWidget {
       ),
     );
   }
+
+}
+
+
+const Map<String, Map<String, dynamic>> _planMeta = {
+  'mensuel': {
+    'label': 'Mensuel',
+    'price': '15 000 DA',
+    'days': 30,
+    'color': Color(0xFF2979FF),
+    'icon': Icons.calendar_month,
+  },
+  'trimestriel': {
+    'label': 'Trimestriel',
+    'price': '40 000 DA',
+    'days': 90,
+    'color': Color(0xFF00897B),
+    'icon': Icons.calendar_today,
+  },
+  'annuel': {
+    'label': 'Annuel',
+    'price': '140 000 DA',
+    'days': 365,
+    'color': Color(0xFFE65100),
+    'icon': Icons.workspace_premium,
+  },
+};
+
+const Map<String, Map<String, dynamic>> _statutMeta = {
+  'en_attente': {
+    'label': 'En attente',
+    'color': Color(0xFFF59E0B),
+    'bg': Color(0xFFFFFBEB),
+    'icon': Icons.hourglass_top_outlined,
+  },
+  'actif': {
+    'label': 'Actif',
+    'color': Color(0xFF10B981),
+    'bg': Color(0xFFECFDF5),
+    'icon': Icons.check_circle_outline,
+  },
+  'expire': {
+    'label': 'Expiré',
+    'color': Color(0xFF6B7280),
+    'bg': Color(0xFFF3F4F6),
+    'icon': Icons.timer_off_outlined,
+  },
+  'refuse': {
+    'label': 'Refusé',
+    'color': Color(0xFFEF4444),
+    'bg': Color(0xFFFEF2F2),
+    'icon': Icons.cancel_outlined,
+  },
+};
+
+class AbonnementsScreen extends StatefulWidget {
+  const AbonnementsScreen({super.key});
+
+  @override
+  State<AbonnementsScreen> createState() => _AbonnementsScreenState();
+}
+
+class _AbonnementsScreenState extends State<AbonnementsScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tab;
+
+  List<Map<String, dynamic>> _all = [];
+  List<Map<String, dynamic>> _expiringSoon = [];
+  bool _loading = true;
+  bool _hasError = false;
+  String _filter = 'Tous';
+  String? _processingId;
+
+  static const String _base = 'https://pfe-backend-nwmy.onrender.com';
+
+  Map<String, String> get _headers => {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ${AdminToken.value ?? ""}',
+  };
+
+  // ── HTTP helpers ───────────────────────────────────────────
+  Future<List<dynamic>> _getList(String path) async {
+    try {
+      final uri = Uri.parse('$_base$path');
+      print('>>> GET $uri');
+      print('>>> Token: ${AdminToken.value}');
+
+      final r = await http
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 30));
+
+      print('>>> Status: ${r.statusCode}');
+      print('>>> Body: ${r.body.length > 300 ? r.body.substring(0, 300) : r.body}');
+
+      if (r.statusCode == 200) {
+        final body = jsonDecode(r.body);
+        if (body is List) return body;
+        if (body is Map) {
+          for (final key in ['data', 'abonnements', 'users']) {
+            if (body[key] is List) return body[key];
+          }
+          print('>>> Map keys found: ${body.keys.toList()}');
+        }
+      } else {
+        print('>>> Non-200 response: ${r.statusCode} — ${r.body}');
+      }
+    } catch (e) {
+      print('>>> _getList error: $e');
+    }
+    return [];
+  }
+
+  Future<bool> _put(String path, {Map<String, dynamic>? body}) async {
+    try {
+      final r = await http
+          .put(Uri.parse('$_base$path'),
+          headers: _headers,
+          body: body != null ? jsonEncode(body) : null)
+          .timeout(const Duration(seconds: 15));
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ── API calls ──────────────────────────────────────────────
+  Future<List<dynamic>> _fetchAll() =>
+      _getList('/api/admin/abonnements');
+  Future<List<dynamic>> _fetchExpiring() =>
+      _getList('/api/admin/abonnements/expiring-soon?days=7');
+  Future<bool> _apiConfirm(String id, {String? plan}) => _put(
+      '/api/admin/abonnements/$id/confirmer',
+      body: plan != null ? {'planOverride': plan} : {});
+  Future<bool> _apiRefuse(String id, {String? raison}) => _put(
+      '/api/admin/abonnements/$id/refuser',
+      body: raison != null ? {'raison': raison} : {});
+  Future<bool> _apiExpire(String id) =>
+      _put('/api/admin/abonnements/$id/expirer');
+
+  // ── Lifecycle ──────────────────────────────────────────────
+  @override
+  void initState() {
+    super.initState();
+    _tab = TabController(length: 2, vsync: this);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _hasError = false; });
+    try {
+      final results = await Future.wait([_fetchAll(), _fetchExpiring()]);
+      if (!mounted) return;
+      setState(() {
+        _all = results[0].map((e) => _mapAbo(e)).toList();
+        _expiringSoon = results[1].map((e) => _mapExpiring(e)).toList();
+        _loading = false;
+        _hasError = false; // only false here — empty list is valid
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _loading = false; _hasError = true; });
+    }
+  }
+
+  // ── Mappers ────────────────────────────────────────────────
+  Map<String, dynamic> _mapAbo(dynamic e) => {
+    '_id':         (e['_id'] ?? '').toString(),
+    'nom':         '${e['prenom'] ?? ''} ${e['nom'] ?? ''}'.trim(),
+    'email':       e['email']       ?? '',
+    'telephone':   e['telephone']   ?? '',
+    'numeroPremit':e['numeroPremit']?? '',
+    'abonnement':  e['abonnement']  ?? '',
+    'statut':      e['abonnementStatut'] ?? 'en_attente',
+    'expire':      e['abonnementExpire'],
+    'ref':         e['refPaiement'] ?? '',
+  };
+
+  Map<String, dynamic> _mapExpiring(dynamic e) => {
+    '_id':          (e['_id'] ?? '').toString(),
+    'nom':          '${e['prenom'] ?? ''} ${e['nom'] ?? ''}'.trim(),
+    'email':        e['email']       ?? '',
+    'telephone':    e['telephone']   ?? '',
+    'abonnement':   e['abonnement']  ?? '',
+    'expire':       e['abonnementExpire'],
+    'joursRestants':e['joursRestants'] ?? 0,
+  };
+
+  // ── Derived ────────────────────────────────────────────────
+  List<Map<String, dynamic>> get _filtered {
+    if (_filter == 'Tous') return _all;
+    final key = {
+      'En attente': 'en_attente',
+      'Actif':      'actif',
+      'Expiré':     'expire',
+      'Refusé':     'refuse',
+    }[_filter];
+    return _all.where((a) => a['statut'] == key).toList();
+  }
+
+  int _count(String statut) =>
+      _all.where((a) => a['statut'] == statut).length;
+
+  // ── Snack ──────────────────────────────────────────────────
+  void _snack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: color,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
+  }
+
+  // ── Dialog: Confirm ────────────────────────────────────────
+  Future<void> _showConfirmDialog(Map<String, dynamic> abo) async {
+    String? selectedPlan =
+    (abo['abonnement'] as String).isNotEmpty ? abo['abonnement'] as String : null;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                  color: const Color(0xFF10B981).withOpacity(0.12),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.check_circle_outline,
+                  color: Color(0xFF10B981), size: 22),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('Confirmer paiement',
+                    style: TextStyle(fontSize: 16))),
+          ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Fournisseur info
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFF0F4FF),
+                    borderRadius: BorderRadius.circular(12)),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(abo['nom'] as String,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      Text(abo['email'] as String,
+                          style:
+                          const TextStyle(color: Colors.grey, fontSize: 12)),
+                      if ((abo['ref'] as String).isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Row(children: [
+                          const Icon(Icons.receipt_outlined,
+                              size: 13, color: Colors.grey),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(abo['ref'] as String,
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                    fontFamily: 'monospace')),
+                          ),
+                          GestureDetector(
+                            onTap: () => Clipboard.setData(
+                                ClipboardData(text: abo['ref'] as String)),
+                            child: const Icon(Icons.copy,
+                                size: 13, color: Colors.grey),
+                          ),
+                        ]),
+                      ],
+                    ]),
+              ),
+              const SizedBox(height: 16),
+              const Text('Plan à activer :',
+                  style:
+                  TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              const SizedBox(height: 8),
+              // Plan picker
+              ..._planMeta.entries.map((entry) {
+                final p = entry.key;
+                final meta = entry.value;
+                final isSel = selectedPlan == p;
+                return GestureDetector(
+                  onTap: () => setD(() => selectedPlan = p),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isSel
+                          ? (meta['color'] as Color).withOpacity(0.1)
+                          : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSel
+                            ? meta['color'] as Color
+                            : Colors.grey.shade200,
+                        width: isSel ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(children: [
+                      Icon(meta['icon'] as IconData,
+                          color: meta['color'] as Color, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(meta['label'] as String,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: isSel
+                                  ? meta['color'] as Color
+                                  : Colors.black87,
+                            )),
+                      ),
+                      Text(meta['price'] as String,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: isSel
+                                  ? meta['color'] as Color
+                                  : Colors.grey)),
+                    ]),
+                  ),
+                );
+              }),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child:
+              const Text('Annuler', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed:
+              selectedPlan == null ? null : () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Activer'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true || selectedPlan == null) return;
+    setState(() => _processingId = abo['_id'] as String);
+    final success = await _apiConfirm(abo['_id'] as String, plan: selectedPlan);
+    if (!mounted) return;
+    setState(() {
+      _processingId = null;
+      if (success) {
+        abo['statut'] = 'actif';
+        abo['abonnement'] = selectedPlan;
+        abo['expire'] = DateTime.now()
+            .add(Duration(days: _planMeta[selectedPlan]!['days'] as int))
+            .toIso8601String();
+      }
+    });
+    _snack(success ? '✓ Abonnement activé pour ${abo['nom']}' : 'Erreur réseau',
+        success ? const Color(0xFF10B981) : Colors.red);
+  }
+
+  // ── Dialog: Refuse ─────────────────────────────────────────
+  Future<void> _showRefuseDialog(Map<String, dynamic> abo) async {
+    final ctrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1), shape: BoxShape.circle),
+            child:
+            const Icon(Icons.cancel_outlined, color: Colors.red, size: 22),
+          ),
+          const SizedBox(width: 10),
+          const Text('Refuser le paiement', style: TextStyle(fontSize: 16)),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Refuser l\'abonnement de ${abo['nom']} ?',
+                style: const TextStyle(fontSize: 14)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: ctrl,
+              maxLines: 2,
+              decoration: InputDecoration(
+                hintText: 'Raison (optionnel)',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                prefixIcon: const Icon(Icons.edit_outlined),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child:
+              const Text('Annuler', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Refuser'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _processingId = abo['_id'] as String);
+    final success = await _apiRefuse(abo['_id'] as String,
+        raison: ctrl.text.trim().isNotEmpty ? ctrl.text.trim() : null);
+    if (!mounted) return;
+    setState(() {
+      _processingId = null;
+      if (success) abo['statut'] = 'refuse';
+    });
+    _snack(success ? '✗ Abonnement refusé' : 'Erreur réseau',
+        success ? Colors.red : Colors.grey);
+  }
+
+  // ── Dialog: Expire ─────────────────────────────────────────
+  Future<void> _showExpireDialog(Map<String, dynamic> abo) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Expirer manuellement'),
+        content: Text(
+            'Forcer l\'expiration de l\'abonnement de ${abo['nom']} ?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey.shade700,
+                foregroundColor: Colors.white),
+            child: const Text('Expirer'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _processingId = abo['_id'] as String);
+    final success = await _apiExpire(abo['_id'] as String);
+    if (!mounted) return;
+    setState(() {
+      _processingId = null;
+      if (success) abo['statut'] = 'expire';
+    });
+    _snack(success ? 'Abonnement expiré' : 'Erreur réseau',
+        success ? Colors.grey.shade700 : Colors.red);
+  }
+
+  // ── Detail bottom sheet ────────────────────────────────────
+  void _showDetail(Map<String, dynamic> abo) {
+    final statut   = abo['statut'] as String;
+    final plan     = abo['abonnement'] as String;
+    final planM    = _planMeta[plan];
+    final statutM  = _statutMeta[statut] ?? _statutMeta['en_attente']!;
+    final isPending = statut == 'en_attente';
+    final isActif   = statut == 'actif';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: EdgeInsets.only(
+          left: 24, right: 24, top: 20,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 28,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Header
+              Row(children: [
+                CircleAvatar(
+                  radius: 26,
+                  backgroundColor: planM != null
+                      ? (planM['color'] as Color).withOpacity(0.12)
+                      : Colors.indigo.shade50,
+                  child: Text(
+                    (abo['nom'] as String).isNotEmpty
+                        ? (abo['nom'] as String)[0]
+                        : '?',
+                    style: TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.bold,
+                      color: planM != null
+                          ? planM['color'] as Color
+                          : Colors.indigo,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(abo['nom'] as String,
+                            style: const TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.bold)),
+                        Text(abo['email'] as String,
+                            style: const TextStyle(
+                                color: Colors.grey, fontSize: 12)),
+                      ]),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                      color: statutM['bg'] as Color,
+                      borderRadius: BorderRadius.circular(20)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(statutM['icon'] as IconData,
+                        color: statutM['color'] as Color, size: 13),
+                    const SizedBox(width: 4),
+                    Text(statutM['label'] as String,
+                        style: TextStyle(
+                            color: statutM['color'] as Color,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12)),
+                  ]),
+                ),
+              ]),
+
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 14),
+
+              _infoRow(Icons.badge_outlined, 'Permis',
+                  (abo['numeroPremit'] as String).isNotEmpty
+                      ? abo['numeroPremit'] as String
+                      : 'Non renseigné'),
+              _infoRow(Icons.phone_outlined, 'Téléphone',
+                  (abo['telephone'] as String).isNotEmpty
+                      ? abo['telephone'] as String
+                      : 'Non renseigné'),
+              if (planM != null)
+                _infoRow(planM['icon'] as IconData, 'Plan',
+                    '${planM['label']} — ${planM['price']}'),
+              if (abo['expire'] != null)
+                _infoRow(Icons.event_outlined, 'Expiration',
+                    _fmtDate(abo['expire'])),
+              if ((abo['ref'] as String).isNotEmpty)
+                _infoRowCopy(Icons.receipt_outlined, 'Réf paiement',
+                    abo['ref'] as String),
+
+              const SizedBox(height: 20),
+
+              // Actions
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                if (isPending)
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showConfirmDialog(abo);
+                    },
+                    icon: const Icon(Icons.check, size: 16),
+                    label: const Text('Confirmer paiement'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                if (isPending)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showRefuseDialog(abo);
+                    },
+                    icon: const Icon(Icons.close,
+                        size: 16, color: Colors.red),
+                    label: const Text('Refuser',
+                        style: TextStyle(color: Colors.red)),
+                    style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                            color: Colors.red.withOpacity(0.4))),
+                  ),
+                if (isActif)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showExpireDialog(abo);
+                    },
+                    icon: const Icon(Icons.timer_off_outlined,
+                        size: 16, color: Colors.grey),
+                    label: const Text('Expirer manuellement',
+                        style:
+                        TextStyle(color: Colors.grey, fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                            color: Colors.grey.withOpacity(0.4))),
+                  ),
+                if (statut == 'refuse' || statut == 'expire')
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showConfirmDialog(abo);
+                    },
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Réactiver'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E3A8A),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Utility ────────────────────────────────────────────────
+  Widget _infoRow(IconData icon, String label, String value) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 16, color: Colors.grey.shade400),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 90,
+                child: Text('$label :',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey,
+                        fontWeight: FontWeight.w500)),
+              ),
+              Expanded(
+                  child: Text(value,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600))),
+            ]),
+      );
+
+  Widget _infoRowCopy(IconData icon, String label, String value) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 16, color: Colors.grey.shade400),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 90,
+                child: Text('$label :',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey,
+                        fontWeight: FontWeight.w500)),
+              ),
+              Expanded(
+                child: Text(value,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'monospace',
+                        letterSpacing: 0.8)),
+              ),
+              GestureDetector(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: value));
+                  _snack('Référence copiée', Colors.indigo);
+                },
+                child: Icon(Icons.copy_outlined,
+                    size: 15, color: Colors.grey.shade400),
+              ),
+            ]),
+      );
+
+  Widget _quickBtn({
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding:
+          const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: color,
+                  fontWeight: FontWeight.w600)),
+        ),
+      );
+
+  String _fmtDate(dynamic raw) {
+    if (raw == null) return '';
+    final d = DateTime.tryParse(raw.toString());
+    if (d == null) return '';
+    return '${d.day.toString().padLeft(2, '0')}/'
+        '${d.month.toString().padLeft(2, '0')}/${d.year}';
+  }
+
+  // ── Build ──────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFF),
+      appBar: AppBar(
+        title: const Text('Abonnements'),
+        backgroundColor: const Color(0xFF1E3A8A),
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new),
+          onPressed: () => Navigator.pop(context),
+        ),
+        bottom: TabBar(
+          controller: _tab,
+          indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white60,
+          labelStyle: const TextStyle(
+              fontWeight: FontWeight.w600, fontSize: 13),
+          tabs: [
+            Tab(
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.list_alt_outlined, size: 16),
+                const SizedBox(width: 6),
+                const Text('Tous'),
+                if (_count('en_attente') > 0) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFFF59E0B),
+                        borderRadius: BorderRadius.circular(10)),
+                    child: Text('${_count('en_attente')}',
+                        style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white)),
+                  ),
+                ],
+              ]),
+            ),
+            Tab(
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.timer_outlined, size: 16),
+                const SizedBox(width: 6),
+                const Text('Expirent bientôt'),
+                if (_expiringSoon.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                        color: Colors.red.shade400,
+                        borderRadius: BorderRadius.circular(10)),
+                    child: Text('${_expiringSoon.length}',
+                        style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white)),
+                  ),
+                ],
+              ]),
+            ),
+          ],
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _hasError
+          ? _buildError()
+          : TabBarView(
+        controller: _tab,
+        children: [_buildAllTab(), _buildExpiringSoonTab()],
+      ),
+    );
+  }
+
+  // ── Tab 1: All ─────────────────────────────────────────────
+  Widget _buildAllTab() {
+    final list = _filtered;
+    return Column(children: [
+      _buildSummaryRow(),
+      _buildFilterBar(),
+      Expanded(
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: list.isEmpty
+              ? Center(
+              child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.card_membership_outlined,
+                        size: 64, color: Colors.grey.shade300),
+                    const SizedBox(height: 12),
+                    Text('Aucun abonnement — $_filter',
+                        style: const TextStyle(color: Colors.grey)),
+                  ]))
+              : ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            itemCount: list.length,
+            separatorBuilder: (_, __) =>
+            const SizedBox(height: 10),
+            itemBuilder: (_, i) => _buildAboCard(list[i]),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  // ── Tab 2: Expiring ────────────────────────────────────────
+  Widget _buildExpiringSoonTab() {
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: _expiringSoon.isEmpty
+          ? Center(
+          child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.check_circle_outline,
+                    size: 64, color: Colors.green.shade300),
+                const SizedBox(height: 12),
+                const Text(
+                    'Aucun abonnement n\'expire dans 7 jours',
+                    style: TextStyle(color: Colors.grey),
+                    textAlign: TextAlign.center),
+              ]))
+          : ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: _expiringSoon.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, i) =>
+            _buildExpiringCard(_expiringSoon[i]),
+      ),
+    );
+  }
+
+  // ── Summary row ────────────────────────────────────────────
+  Widget _buildSummaryRow() {
+    final items = [
+      ('En attente', _count('en_attente'),
+      const Color(0xFFF59E0B), const Color(0xFFFFFBEB)),
+      ('Actifs', _count('actif'),
+      const Color(0xFF10B981), const Color(0xFFECFDF5)),
+      ('Expirés', _count('expire'),
+      const Color(0xFF6B7280), const Color(0xFFF3F4F6)),
+      ('Refusés', _count('refuse'),
+      const Color(0xFFEF4444), const Color(0xFFFEF2F2)),
+    ];
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Row(
+        children: items
+            .map((item) => Expanded(
+          child: Container(
+            margin:
+            const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.symmetric(
+                vertical: 8, horizontal: 4),
+            decoration: BoxDecoration(
+                color: item.$4,
+                borderRadius: BorderRadius.circular(10)),
+            child: Column(children: [
+              Text('${item.$2}',
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: item.$3)),
+              Text(item.$1,
+                  style: TextStyle(
+                      fontSize: 9,
+                      color: item.$3,
+                      fontWeight: FontWeight.w600),
+                  textAlign: TextAlign.center),
+            ]),
+          ),
+        ))
+            .toList(),
+      ),
+    );
+  }
+
+  // ── Filter bar ─────────────────────────────────────────────
+  Widget _buildFilterBar() {
+    const filters = ['Tous', 'En attente', 'Actif', 'Expiré', 'Refusé'];
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: filters.map((f) {
+            final sel = _filter == f;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilterChip(
+                label: Text(f, style: const TextStyle(fontSize: 12)),
+                selected: sel,
+                onSelected: (_) => setState(() => _filter = f),
+                selectedColor:
+                const Color(0xFF1E3A8A).withOpacity(0.12),
+                checkmarkColor: const Color(0xFF1E3A8A),
+                labelStyle: TextStyle(
+                  color: sel
+                      ? const Color(0xFF1E3A8A)
+                      : Colors.grey.shade700,
+                  fontWeight:
+                  sel ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  // ── Abo card ───────────────────────────────────────────────
+  Widget _buildAboCard(Map<String, dynamic> abo) {
+    final statut    = abo['statut'] as String;
+    final plan      = abo['abonnement'] as String;
+    final planM     = _planMeta[plan];
+    final statutM   = _statutMeta[statut] ?? _statutMeta['en_attente']!;
+    final isPending = statut == 'en_attente';
+    final isLoading = _processingId == abo['_id'];
+
+    return GestureDetector(
+      onTap: () => _showDetail(abo),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 2))
+          ],
+          border: Border(
+              left: BorderSide(
+                  color: statutM['color'] as Color, width: 4)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: isLoading
+              ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(8),
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ))
+              : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top row
+              Row(children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: planM != null
+                      ? (planM['color'] as Color).withOpacity(0.12)
+                      : Colors.indigo.shade50,
+                  child: Text(
+                    (abo['nom'] as String).isNotEmpty
+                        ? (abo['nom'] as String)[0]
+                        : '?',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: planM != null
+                            ? planM['color'] as Color
+                            : Colors.indigo),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                      children: [
+                        Text(abo['nom'] as String,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14)),
+                        Text(abo['email'] as String,
+                            style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 11)),
+                      ]),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                      color: statutM['bg'] as Color,
+                      borderRadius: BorderRadius.circular(20)),
+                  child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(statutM['icon'] as IconData,
+                            color: statutM['color'] as Color,
+                            size: 12),
+                        const SizedBox(width: 3),
+                        Text(statutM['label'] as String,
+                            style: TextStyle(
+                                color:
+                                statutM['color'] as Color,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700)),
+                      ]),
+                ),
+              ]),
+
+              const SizedBox(height: 10),
+
+              // Plan + expiry
+              Row(children: [
+                if (planM != null) ...[
+                  Icon(planM['icon'] as IconData,
+                      size: 13, color: planM['color'] as Color),
+                  const SizedBox(width: 4),
+                  Text(planM['label'] as String,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: planM['color'] as Color)),
+                  const SizedBox(width: 4),
+                  Text('· ${planM['price']}',
+                      style: const TextStyle(
+                          fontSize: 11, color: Colors.grey)),
+                ],
+                const Spacer(),
+                if (abo['expire'] != null)
+                  Text(_fmtDate(abo['expire']),
+                      style: const TextStyle(
+                          fontSize: 11, color: Colors.grey)),
+              ]),
+
+              // Quick actions for pending
+              if (isPending) ...[
+                const SizedBox(height: 10),
+                const Divider(height: 1),
+                const SizedBox(height: 10),
+                Row(children: [
+                  if ((abo['ref'] as String).isNotEmpty) ...[
+                    const Icon(Icons.receipt_outlined,
+                        size: 12, color: Colors.grey),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(abo['ref'] as String,
+                          style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                              fontFamily: 'monospace'),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                  ] else
+                    const Spacer(),
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    _quickBtn(
+                      label: 'Confirmer',
+                      color: const Color(0xFF10B981),
+                      onTap: () => _showConfirmDialog(abo),
+                    ),
+                    const SizedBox(width: 6),
+                    _quickBtn(
+                      label: 'Refuser',
+                      color: Colors.red,
+                      onTap: () => _showRefuseDialog(abo),
+                    ),
+                  ]),
+                ]),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Expiring card ──────────────────────────────────────────
+  Widget _buildExpiringCard(Map<String, dynamic> e) {
+    final plan   = e['abonnement'] as String;
+    final planM  = _planMeta[plan];
+    final jours  = e['joursRestants'] as int;
+    final urgency = jours <= 2
+        ? Colors.red
+        : jours <= 4
+        ? Colors.orange
+        : Colors.amber;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: urgency.withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+              color: urgency.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 2))
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(children: [
+          Container(
+            width: 52, height: 52,
+            decoration: BoxDecoration(
+                color: urgency.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12)),
+            child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('$jours',
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: urgency)),
+                  Text('jours',
+                      style:
+                      TextStyle(fontSize: 9, color: urgency)),
+                ]),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(e['nom'] as String,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 14)),
+                  Text(e['email'] as String,
+                      style: const TextStyle(
+                          color: Colors.grey, fontSize: 11)),
+                  if (planM != null) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      '${planM['label']} · expire le ${_fmtDate(e['expire'])}',
+                      style: const TextStyle(
+                          fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ]),
+          ),
+          if ((e['telephone'] as String).isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.phone_outlined,
+                  color: Color(0xFF1E3A8A), size: 20),
+              onPressed: () =>
+                  _snack(e['telephone'] as String, const Color(0xFF1E3A8A)),
+              tooltip: e['telephone'] as String,
+            ),
+        ]),
+      ),
+    );
+  }
+
+  // ── Error state ────────────────────────────────────────────
+  Widget _buildError() => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.wifi_off_outlined,
+                size: 60, color: Colors.grey.shade300),
+            const SizedBox(height: 16),
+            const Text('Impossible de charger les abonnements.',
+                style: TextStyle(color: Colors.grey),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Réessayer'),
+            ),
+          ]),
+    ),
+  );
 }

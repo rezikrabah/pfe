@@ -243,7 +243,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   // directly; instead rebuilds route for that chauffeur then starts the timer.
   void _startSimulationForChauffeur(String chauffeurNom) {
     print('>>> _startSimulationForChauffeur: $chauffeurNom');
-    final route = _routePointsByChauffeur[chauffeurNom] ?? [];
+    final route = (_routePointsByChauffeur[chauffeurNom]?.isNotEmpty == true)
+        ? _routePointsByChauffeur[chauffeurNom]!
+        : (_testOrders.isEmpty ? _fullRoutePoints : []);
     if (route.isEmpty) {
       _showSnack('Pas d\'itinéraire pour $chauffeurNom', Colors.orange);
       return;
@@ -685,13 +687,21 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
                                 setModal(() => setState(() {
                                   _orderStatus[stop.mongoId] = 'accepted';
                                   _isPreviewRoute = false;
+                                  if (_testOrders.isEmpty) {
+                                    print('[DEBUG] stop.quantity: ${stop.quantity} mongoId: ${stop.mongoId}');
+                                    _capacityLiters = (_capacityLiters - stop.quantity).clamp(0, double.infinity);
+                                  }
                                 }));
                                 Navigator.pop(ctx);
                                 _rebuildRouteFromAccepted();
                               },
                               onReject: () {
-                                setModal(() => setState(() =>
-                                _orderStatus[stop.mongoId] = 'rejected'));
+                                setModal(() => setState(() {
+                                  _orderStatus[stop.mongoId] = 'rejected';
+                                  if (_testOrders.isEmpty) {
+                                    _capacityLiters += stop.quantity;
+                                  }
+                                }));
                                 _rebuildRouteFromAccepted();
                               },
                             ),
@@ -1746,14 +1756,6 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           return;
         }
 
-        vrpResult = await ApiService.getVrpSolutionWithRealOrders(
-          commandes:        commandes,
-          depotLat:         _currentPosition.latitude,
-          depotLon:         _currentPosition.longitude,
-          capaciteVehicule: _capacityLiters > 0 ? _capacityLiters : 5000,
-        );
-// Set real user as the single chauffeur for real orders
-        print('>>> setting real chauffeur, _testOrders.length: ${_testOrders.length}');
         _testChauffeurs = [
           {
             'id'        : 'me',
@@ -1764,6 +1766,13 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
             'capacity'  : _capacityLiters > 0 ? _capacityLiters : 5000,
           }
         ];
+        vrpResult = await ApiService.getVrpSolutionWithRealOrders(
+          commandes:        commandes,
+          depotLat:         _currentPosition.latitude,
+          depotLon:         _currentPosition.longitude,
+          capaciteVehicule: _capacityLiters > 0 ? _capacityLiters : 5000,
+        );
+        print('>>> setting real chauffeur, _testOrders.length: ${_testOrders.length}');
       }
 
       final Map<String, Map<String, dynamic>> commandeById = {
@@ -2058,6 +2067,10 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         fullRoutePoints.addAll(routePoints);
         colorIdx++;
       }
+      if (_testOrders.isEmpty) {
+        _totalDistanceKm = stopDistanceMap.values
+            .fold<double>(0.0, (sum, d) => sum + (d ?? 0.0));
+      }
 
       int legIdx = 0;
       for (final entry in stopsByChauffeur.entries) {
@@ -2106,7 +2119,9 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
         _markers         = _buildMarkers(enrichedStops);
         _optimizedStops  = enrichedStops;
         _allStops        = enrichedStops;
-        _totalDistanceKm = (vrpResult['distance_totale_km'] as num?)?.toDouble();
+        _totalDistanceKm = _testOrders.isNotEmpty
+            ? (vrpResult['distance_totale_km'] as num?)?.toDouble()
+            : _totalDistanceKm;
         _fullRoutePoints = List<LatLng>.from(fullRoutePoints);
         _loadingRoutes   = false;
       });
@@ -2242,7 +2257,12 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       final fullName = '$prenom $nom'.trim();
       if (!mounted) return;
       setState(() {
-        _capacityLiters = quantite;
+        // Only reset capacity from API if no real orders are currently accepted
+        final hasAcceptedRealOrders = _testOrders.isEmpty &&
+            _orderStatus.values.any((v) => v == 'accepted');
+        if (!hasAcceptedRealOrders) {
+          _capacityLiters = quantite;
+        }
         _loadingCapacity = false;
         if (fullName.isNotEmpty) _myName = fullName;
       });
