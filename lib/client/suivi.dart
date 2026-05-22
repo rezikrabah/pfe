@@ -48,7 +48,9 @@ class _suiviState extends State<suivi> {
   }
 
   Future<void> _loadOnlineFournisseurs() async {
-    final list = await ApiService.getMyChauffeurs();
+    final list = await ApiService.getMyChauffeursonline();
+    debugPrint('total chauffeurs: ${list.length}');
+    debugPrint('first item: ${list.isNotEmpty ? list.first : 'empty'}');
     setState(() {
       _onlineFournisseurs = list
           .where((f) =>
@@ -58,6 +60,7 @@ class _suiviState extends State<suivi> {
           .map((f) => Map<String, dynamic>.from(f))
           .toList();
     });
+    debugPrint('online with position: ${_onlineFournisseurs.length}');
   }
 
 

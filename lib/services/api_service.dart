@@ -214,8 +214,8 @@ class ApiService {
       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       final body = jsonEncode({
         'conducteurs'    : conducteurs, // ← single entry, no duplicate
-        'pop_size'       : 30,
-        'generations'    : 80,
+        'pop_size'       : 50,
+        'generations'    : 120 ,
         'distance_matrix': distanceMatrix,
         'commandes'      : vrpCommandes,
         'priorite'       : 'balance',
@@ -845,6 +845,26 @@ class ApiService {
         Uri.parse('$baseUrl/api/fournisseurs/my'),
         headers: _authHeaders,
       );
+      debugPrint('getMyChauffeurs status: ${response.statusCode}');
+      debugPrint('getMyChauffeurs body: ${response.body}');
+      return _decodeList(response);
+    } on SocketException {
+      return [];
+    } on TimeoutException {
+      return [];
+    } catch (e) {
+      debugPrint('getMyChauffeurs error: $e');
+      return [];
+    }
+  }
+  static Future<List<dynamic>> getMyChauffeursonline() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/fournisseurs/online'), // ← changed
+        headers: _authHeaders,
+      );
+      debugPrint('getMyChauffeurs status: ${response.statusCode}');
+      debugPrint('getMyChauffeurs body: ${response.body}');
       return _decodeList(response);
     } on SocketException {
       return [];
@@ -854,6 +874,7 @@ class ApiService {
       return [];
     }
   }
+
   static Future<Map<String, dynamic>> acceptCommande(String commandeId) async {
     try {
       final res = await http.put(

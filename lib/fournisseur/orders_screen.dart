@@ -421,17 +421,68 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   // ── ACCEPT single ORDER ───────────────────────────────────────
   Future<void> _acceptOrder(String orderId) async {
+    // ── Capacity check ──────────────────────────────────────────
+    final order = orders.firstWhere((o) => o['id'] == orderId, orElse: () => {});
+    if (order.isNotEmpty) {
+      try {
+        final info     = await ApiService.getMyInfo();
+        final current  = (info['fournisseurInfo']?['quantiteEau'] as num?)?.toDouble() ?? 0.0;
+        final quantity = (order['quantity'] as num?)?.toDouble() ?? 0.0;
+
+        debugPrint('[CAPACITY CHECK] current=$current  order quantity=$quantity');
+
+        if (quantity > current) {
+          debugPrint('[CAPACITY CHECK] ❌ REFUSED — not enough water');
+          if (mounted) {
+            showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                title: const Row(children: [
+                  Icon(Icons.water_drop, color: Colors.blue),
+                  SizedBox(width: 6),
+                  Text('Capacité insuffisante'),
+
+
+                ]),
+                content: Text(
+                  'Vous avez ${current.toStringAsFixed(0)} L disponibles '
+                      'mais cette commande nécessite ${quantity.toStringAsFixed(0)} L.\n\n'
+                      'Rechargez votre camion avant d\'accepter cette commande.',
+                ),
+                actions: [
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E3A8A),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Compris'),
+                  ),
+                ],
+              ),
+            );
+          }
+          return;
+        }
+        debugPrint('[CAPACITY CHECK] ✅ OK — proceeding');
+      } catch (e) {
+        debugPrint('[CAPACITY CHECK] error fetching capacity: $e');
+      }
+    }
+
+    // ── Test / generated orders ─────────────────────────────────
     if (orderId.startsWith('test_') || orderId.startsWith('gen_')) {
       setState(() {
         final idx = orders.indexWhere((o) => o['id'] == orderId);
         if (idx != -1) {
           orders[idx]['status']    = 'accepted';
           orders[idx]['rawStatus'] = 'en livraison';
-
         }
       });
-      // Replace your updateWaterQuantity call in BOTH modes with this:
-      final order = orders.firstWhere((o) => o['id'] == orderId, orElse: () => {});
+
       if (order.isNotEmpty) {
         final quantity = (order['quantity'] as num?)?.toDouble() ?? 0.0;
         try {
@@ -444,33 +495,30 @@ class _OrdersScreenState extends State<OrdersScreen> {
           debugPrint('[ORDERS] water update failed: $e');
         }
       }
-      if (!mounted) return;
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('✅ Commande acceptée — voir l\'itinéraire sur la carte'),
         backgroundColor: Colors.green,
         duration: Duration(seconds: 5),
       ));
 
-      // Recompute route for accepted orders only, then switch to map
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        final providerState =
-        context.findAncestorStateOfType<ProviderHomeScreenState>();
+        final providerState = context.findAncestorStateOfType<ProviderHomeScreenState>();
         if (providerState != null) {
-          final acceptedOrders =
-          orders.where((o) => o['status'] == 'accepted').toList();
+          final acceptedOrders = orders.where((o) => o['status'] == 'accepted').toList();
           providerState.previewRouteForOrders(acceptedOrders);
           providerState.switchToMapTab();
         }
       });
       return;
     }
-// REAL mode
+
+    // ── Real orders ─────────────────────────────────────────────
     setState(() => _acceptingOrderId = orderId);
     try {
       final result = await ApiService.acceptCommande(orderId);
-
       if (result['error'] != null) { _showError(result['error']); return; }
 
       setState(() {
@@ -480,6 +528,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
           orders[idx]['rawStatus'] = 'en livraison';
         }
       });
+
+      if (order.isNotEmpty) {
+        final quantity = (order['quantity'] as num?)?.toDouble() ?? 0.0;
+        try {
+          final info    = await ApiService.getMyInfo();
+          final current = (info['fournisseurInfo']?['quantiteEau'] as num?)?.toDouble() ?? 0.0;
+          final newQty  = (current - quantity).clamp(0.0, double.infinity);
+          await ApiService.updateWaterQuantity(quantiteEau: newQty);
+          debugPrint('[WATER] real order: $current - $quantity = $newQty');
+        } catch (e) {
+          debugPrint('[ORDERS] water update failed: $e');
+        }
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -497,7 +558,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
         }
       });
 
-      // ← DELETE everything after this line until the catch block
     } catch (e) {
       _showError('Erreur réseau: $e');
     } finally {
@@ -886,10 +946,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(children: [
               _buildInfoChip(Icons.water_drop, '${order['quantity']} L', Colors.blue),
-              const SizedBox(width: 6),
-              _buildInfoChip(Icons.route, '${order['distance']} km', Colors.orange),
-              const SizedBox(width: 6),
-              _buildInfoChip(Icons.timer, '${order['duration']} min', Colors.purple),
               const SizedBox(width: 6),
               _buildInfoChip(Icons.payments, '${order['price']} DA', Colors.green),
               const SizedBox(width: 6),

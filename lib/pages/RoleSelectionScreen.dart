@@ -59,8 +59,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       context,
       MaterialPageRoute(builder: (context) {
         if (role == 'client') return suivi();
-        if (role == 'gerant') return const ChauffeurScreen();
-        return const fournisseurinfos();
+        if (role == 'chauffeur' || role == 'gerant') return fournisseurinfos(role: role);
+        return suivi();
       }),
     );
   }
@@ -184,14 +184,14 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   ),
                   _buildRoleCard(
                     icon: Icons.local_shipping,
-                    title: "Chauffeur",
+                    title: "conducteur",
                     role: "chauffeur",
                     screenWidth: screenWidth,
                     screenHeight: screenHeight,
                   ),
                   _buildRoleCard(
                     icon: Icons.admin_panel_settings,
-                    title: "Gérant",
+                    title: "fournisseur",
                     role: "gerant",
                     screenWidth: screenWidth,
                     screenHeight: screenHeight,

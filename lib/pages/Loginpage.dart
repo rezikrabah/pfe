@@ -93,22 +93,24 @@ class _LoginpageState extends State<Loginpage> {
       );
 
       final String? role = result['user']?['role'];
+      final String? userId = result['user']?['id'];
 
       if (!mounted) return;
 
-      if (role == 'client') {
+      if (role == null || role.isEmpty) {
         Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => suivi()));
-      } else if (role == 'chauffeur') {
-        Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => ProviderHomeScreen()));
-      } else if (role == 'gerant') {
-        Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => const ChauffeurScreen()));
-      } else {
-        Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => RoleSelectionScreen()));
-      }
+            context, MaterialPageRoute(builder: (_) => RoleSelectionScreen(userId: userId)));
+      } else if (role == 'client') {
+      Navigator.pushReplacement(
+          context, MaterialPageRoute(builder: (_) => suivi()));
+    } else if (role == 'gerant') {
+      // role already set = info already submitted before
+      Navigator.pushReplacement(
+          context, MaterialPageRoute(builder: (_) => const ChauffeurScreen()));
+    } else if (role == 'chauffeur') {
+      Navigator.pushReplacement(
+          context, MaterialPageRoute(builder: (_) => const ProviderHomeScreen()));
+    }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

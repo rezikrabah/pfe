@@ -36,7 +36,43 @@ class ClientTrackingPage extends StatefulWidget {
 class _ClientTrackingPageState extends State<ClientTrackingPage> {
   final MapController _mapController = MapController();
   Timer? _timer;
+  Future<void> _cancelCommande() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Annuler la commande ?'),
+        content: const Text('Êtes-vous sûr de vouloir annuler cette commande ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Non', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Oui, annuler'),
+          ),
+        ],
+      ),
+    );
 
+    if (confirm != true) return;
+
+    try {
+      await ApiService.cancelCommande(widget.commandeId);
+      if (!mounted) return;
+      setState(() => _statut = 'refusee');
+      _timer?.cancel();
+    } catch (e) {
+      print('Erreur lors de l\'annulation');
+    }
+  }
   // ── State ──────────────────────────────────────────────────────
   String       _statut      = 'en_attente';
   LatLng?      _driverPos;
@@ -268,29 +304,40 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       // If destination is null, just show the driver dot with no route.
     }
 
-    // ── Parse driver / supplier name ──────────────────────────
     String? driverName;
     String? driverPhone;
+    double? driverRating; // ← add local variable
     final chauffeur   = data['chauffeur'];
     final fournisseur = data['fournisseur'];
 
     if (chauffeur != null && chauffeur['nom'] != null) {
-      driverName    = chauffeur['nom'];
-      driverPhone   = chauffeur['telephone'] ?? chauffeur['phone'] ?? widget.driverPhone;
-      _chauffeurId  = (chauffeur['_id'] ?? chauffeur['id'])?.toString();
-      _driverRating = (chauffeur['noteMoyenne'] ?? 0.0).toDouble(); // ← add this
-    } else if (fournisseur != null) {
-      driverName =
-          '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'.trim();
-      if (driverName!.isEmpty) driverName = null;
-      _chauffeurId  ??= (fournisseur['_id'] ?? fournisseur['id'])?.toString();
-      driverPhone     = fournisseur['telephone']?.toString();         // ← add
-      _driverRating   = (fournisseur['noteMoyenne'] ?? 0.0).toDouble(); // ← add
-    }
+      driverName   = chauffeur['nom'];
+      driverPhone  = chauffeur['telephone'] ?? chauffeur['phone'] ?? widget.driverPhone;
+      _chauffeurId = (chauffeur['_id'] ?? chauffeur['id'])?.toString();
 
+      // Try multiple possible field names
+      final rawRating = chauffeur['noteMoyenne']
+          ?? chauffeur['rating']
+          ?? chauffeur['note']
+          ?? chauffeur['averageRating'];
+      driverRating = rawRating != null ? (rawRating as num).toDouble() : null;
+
+    } else if (fournisseur != null) {
+      driverName = '${fournisseur['prenom'] ?? ''} ${fournisseur['nom'] ?? ''}'.trim();
+      if (driverName!.isEmpty) driverName = null;
+      _chauffeurId ??= (fournisseur['_id'] ?? fournisseur['id'])?.toString();
+      driverPhone  = fournisseur['telephone']?.toString();
+
+      final rawRating = fournisseur['noteMoyenne']
+          ?? fournisseur['rating']
+          ?? fournisseur['note'];
+      driverRating = rawRating != null ? (rawRating as num).toDouble() : null;
+    }
+    debugPrint('[RATING DEBUG] chauffeur raw: $chauffeur');
+    debugPrint('[RATING DEBUG] fournisseur raw: $fournisseur');
+    debugPrint('[RATING DEBUG] driverRating resolved: $driverRating');
     if (!mounted) return;
 
-    // ── FIX 3: Always update _driverPos so marker redraws every poll ──
     setState(() {
       _error        = null;
       _loading      = false;
@@ -302,7 +349,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
       _durationMin  = durationMin;
       _driverName   = driverName;
       _driverPhone  = driverPhone;
-      _driverRating = _driverRating;
+      _driverRating = driverRating; // ← now uses the local variable
     });
 
     debugPrint('[CHAUFFEUR] name=$driverName phone=$driverPhone rating=$_driverRating');
@@ -500,7 +547,7 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
             Text(
               isDelivered
                   ? 'Votre commande a été livrée avec succès.'
-                  : 'Votre commande a été refusée par le fournisseur.',
+                  : 'Votre commande a été refusée.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 15, color: Colors.grey.shade600),
@@ -766,6 +813,8 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                                     ),
                                   ),
                                 ]),
+                              // ── Cancel button — only show when order is pending or accepted ──
+
                             ],
                           ),
                         ),
@@ -780,6 +829,24 @@ class _ClientTrackingPageState extends State<ClientTrackingPage> {
                           ),
                       ]),
                     ],
+                    if (_statut == 'en_attente' || _statut == 'acceptee'|| _statut == 'assignee')
+                      Padding(
+                        padding: EdgeInsets.only(top: screenHeight * 0.015),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _cancelCommande,
+                            icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                            label: const Text('Annuler la commande',
+                                style: TextStyle(color: Colors.red)),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.red),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      ),
 
                     if (_distanceKm != null &&
                         _durationMin != null) ...[

@@ -35,6 +35,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int    _totalDeliveries = 0;
   int    _trucks     = 0;
   int    _totalCapacity = 0;
+  int _warningsCount = 0;
+  List<Map<String, dynamic>> _warningsList = [];
   String _memberSince = '';
   String _role       = '';
   List<String> selectedWilayas = [];
@@ -71,9 +73,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       // For fournisseurs, also fetch /api/fournisseurs/me for richer data
       Map<String, dynamic> fournisseurData = {};
-      if (ApiService.userRole == 'fournisseur' ||
+      if (ApiService.userRole == 'chauffeur' ||
           ApiService.userRole == 'gerant') {
         fournisseurData = await ApiService.getMyInfo();
+        debugPrint('getMyInfo full response: $fournisseurData');
       }
 
       // Parse member-since date
@@ -98,8 +101,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
         // Fournisseur-specific fields
         if (fournisseurData['error'] == null) {
-          _rating    = (fournisseurData['rating']   as num?)?.toDouble() ?? 0.0;
-          _totalDeliveries = (fournisseurData['totalLivraisons'] as num?)?.toInt() ?? 0;
+          _rating          = (data['noteMoyenne']              as num?)?.toDouble()
+              ?? (fournisseurData['noteMoyenne']   as num?)?.toDouble() ?? 0.0;
+          _totalDeliveries = (fournisseurData['totalLivraisons'] as num?)?.toInt()  ?? 0;
+          debugPrint('data noteMoyenne: ${data['noteMoyenne']}');
+          debugPrint('fournisseurData noteMoyenne: ${fournisseurData['noteMoyenne']}');
+          debugPrint('fournisseurData totalLivraisons: ${fournisseurData['totalLivraisons']}');
           // capaciteCamion comes as a number (litres)
           _totalCapacity   = (fournisseurData['quantiteEau'] as num?)?.toInt() ?? 0;
           // chauffeurs list length if gerant
@@ -113,6 +120,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       setState(() { _error = e.toString(); _isLoading = false; });
     }
+
   }
 
 
@@ -476,24 +484,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           Row(
             children: [
-              Expanded(
-                child: _buildStatCard(
-                    icon: Icons.local_shipping,
-                    label: 'Camions',
-                    value: '$_trucks',
-                    color: const Color(0xFF1E3A8A)),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                    icon: Icons.water_drop,
-                    label: 'Capacité totale',
-                    value: '$_totalCapacity L',
-                    color: Colors.blue),
-              ),
             ],
           ),
-          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -504,15 +496,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     color: Colors.green),
               ),
               const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                    icon: Icons.star,
-                    label: 'Note',
-                    value: _rating > 0
-                        ? '${_rating.toStringAsFixed(1)}/5'
-                        : 'N/A',
-                    color: Colors.amber),
-              ),
             ],
           ),
           

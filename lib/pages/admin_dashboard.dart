@@ -218,137 +218,286 @@ const List<String> kRaisonsSignalement = [
 
 void showSignalementDialog(BuildContext context, {String? defaultTarget}) {
   final messageCtrl = TextEditingController();
-  final targetCtrl  = TextEditingController(text: defaultTarget ?? '');
+  final searchCtrl  = TextEditingController(text: defaultTarget ?? '');
   String? selectedRaison;
   String targetType = 'Client';
+  String? selectedTargetId;
+  String? selectedTargetName;
+  List<Map<String, dynamic>> allClients    = [];
+  List<Map<String, dynamic>> allChauffeurs = [];
+  List<Map<String, dynamic>> filteredList  = [];
+  bool isLoadingList = true;
+
+  void applyFilter(StateSetter set) {
+    final source = targetType == 'Client' ? allClients : allChauffeurs;
+    final query  = searchCtrl.text.toLowerCase();
+    set(() {
+      filteredList = source
+          .where((e) => (e['name'] as String).toLowerCase().contains(query))
+          .toList();
+    });
+  }
 
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, set) => Padding(
-        padding: EdgeInsets.only(
-            left: 20, right: 20, top: 24,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(children: [
-                const Icon(Icons.flag_outlined, color: Color(0xFF1E3A8A)),
-                const SizedBox(width: 8),
-                const Text('Envoyer un signalement',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const Spacer(),
-                IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(ctx)),
-              ]),
-              const SizedBox(height: 16),
-              const Text('Envoyer à :',
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Row(
-                children: ['Client', 'Chauffeur'].map((t) {
-                  final sel = targetType == t;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(t),
-                      selected: sel,
-                      selectedColor: const Color(0xFF1E3A8A),
-                      labelStyle:
-                      TextStyle(color: sel ? Colors.white : Colors.black),
-                      onSelected: (_) => set(() => targetType = t),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: targetCtrl,
-                decoration: InputDecoration(
-                  labelText: 'Nom du $targetType',
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  prefixIcon: const Icon(Icons.person_outline),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text('Raison :',
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8, runSpacing: 6,
-                children: kRaisonsSignalement.map((r) {
-                  final sel = selectedRaison == r;
-                  return ChoiceChip(
-                    label: Text(r, style: const TextStyle(fontSize: 12)),
-                    selected: sel,
-                    selectedColor: Colors.red.shade100,
-                    labelStyle: TextStyle(
-                        color: sel ? Colors.red.shade800 : Colors.black),
-                    onSelected: (_) => set(() {
-                      selectedRaison = sel ? null : r;
-                      if (!sel) messageCtrl.text = r;
-                    }),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: messageCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: 'Message (optionnel)',
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  prefixIcon: const Icon(Icons.edit_outlined),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    if (selectedRaison == null && messageCtrl.text.trim().isEmpty) return;
+    builder: (ctx) {
+      return StatefulBuilder(
+        builder: (ctx, set) {
+          // Fetch on first build
+          if (isLoadingList && allClients.isEmpty && allChauffeurs.isEmpty) {
+            isLoadingList = true;
+            Future.wait([
+              AdminApi.getUsers(),
+              AdminApi.getChauffeurs(),
+            ]).then((results) {
+              if (!ctx.mounted) return;
+              set(() {
+                allClients = results[0].map<Map<String, dynamic>>((u) => {
+                  '_id':  (u['_id'] ?? u['id'] ?? '').toString(),
+                  'name': '${u['nom'] ?? ''} ${u['prenom'] ?? ''}'.trim(),
+                }).where((u) => (u['name'] as String).isNotEmpty).toList();
 
-                    Navigator.pop(ctx);
+                allChauffeurs = results[1].map<Map<String, dynamic>>((d) => {
+                  '_id':  (d['_id'] ?? d['id'] ?? '').toString(),
+                  'name': '${d['nom'] ?? ''} ${d['prenom'] ?? ''}'.trim(),
+                }).where((d) => (d['name'] as String).isNotEmpty).toList();
 
-                    final ok = await AdminApi.sendSignalement(
-                      targetName: targetCtrl.text.isNotEmpty ? targetCtrl.text : targetType,
-                      targetType: targetType,
-                      raison:     selectedRaison ?? 'Autre',
-                      message:    messageCtrl.text.trim(),
-                    );
+                isLoadingList = false;
+                applyFilter(set);
+              });
+            });
+          }
 
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text(ok
-                            ? 'Signalement envoyé à ${targetCtrl.text.isNotEmpty ? targetCtrl.text : targetType}'
-                            : 'Erreur lors de l\'envoi'),
-                        backgroundColor: ok ? Colors.red.shade700 : Colors.grey,
-                      ));
-                    }
-                  },
-                  icon: const Icon(Icons.send),
-                  label: const Text('Envoyer le signalement'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red.shade700,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          return Padding(
+            padding: EdgeInsets.only(
+                left: 20, right: 20, top: 24,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── Header ──────────────────────────────────────────
+                  Row(children: [
+                    const Icon(Icons.flag_outlined, color: Color(0xFF1E3A8A)),
+                    const SizedBox(width: 8),
+                    const Text('Envoyer un signalement',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(ctx)),
+                  ]),
+                  const SizedBox(height: 16),
+
+                  // ── Target type chips ────────────────────────────────
+                  const Text('Envoyer à :', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: ['Client', 'Chauffeur'].map((t) {
+                      final sel = targetType == t;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(t),
+                          selected: sel,
+                          selectedColor: const Color(0xFF1E3A8A),
+                          labelStyle: TextStyle(
+                              color: sel ? Colors.white : Colors.black),
+                          onSelected: (_) {
+                            set(() {
+                              targetType         = t;
+                              selectedTargetId   = null;
+                              selectedTargetName = null;
+                              searchCtrl.clear();
+                            });
+                            applyFilter(set);
+                          },
+                        ),
+                      );
+                    }).toList(),
                   ),
-                ),
+                  const SizedBox(height: 12),
+
+                  // ── Search field ─────────────────────────────────────
+                  TextField(
+                    controller: searchCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Rechercher un $targetType',
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      prefixIcon: isLoadingList
+                          ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ))
+                          : const Icon(Icons.search),
+                      suffixIcon: searchCtrl.text.isNotEmpty
+                          ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            searchCtrl.clear();
+                            set(() {
+                              selectedTargetId   = null;
+                              selectedTargetName = null;
+                            });
+                            applyFilter(set);
+                          })
+                          : null,
+                    ),
+                    onChanged: (_) => applyFilter(set),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // ── Dropdown list ────────────────────────────────────
+                  if (filteredList.isNotEmpty)
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: filteredList.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(height: 1, color: Colors.grey.shade200),
+                        itemBuilder: (_, i) {
+                          final item       = filteredList[i];
+                          final isSelected = item['_id'] == selectedTargetId;
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(
+                              targetType == 'Client'
+                                  ? Icons.person_outline
+                                  : Icons.local_shipping_outlined,
+                              color: isSelected
+                                  ? const Color(0xFF1E3A8A)
+                                  : Colors.grey,
+                            ),
+                            title: Text(item['name'] as String,
+                                style: TextStyle(
+                                    fontWeight: isSelected
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                    color: isSelected
+                                        ? const Color(0xFF1E3A8A)
+                                        : Colors.black)),
+                            trailing: isSelected
+                                ? const Icon(Icons.check, color: Color(0xFF1E3A8A))
+                                : null,
+                            onTap: () => set(() {
+                              selectedTargetId   = item['_id'] as String;
+                              selectedTargetName = item['name'] as String;
+                              searchCtrl.text    = selectedTargetName!;
+                              filteredList       = []; // collapse list
+                            }),
+                          );
+                        },
+                      ),
+                    ),
+
+                  // ── Selected badge ───────────────────────────────────
+                  if (selectedTargetName != null && filteredList.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Chip(
+                        avatar: const Icon(Icons.check_circle,
+                            color: Color(0xFF1E3A8A), size: 18),
+                        label: Text(selectedTargetName!),
+                        backgroundColor:
+                        const Color(0xFF1E3A8A).withOpacity(0.1),
+                        labelStyle:
+                        const TextStyle(color: Color(0xFF1E3A8A)),
+                      ),
+                    ),
+
+                  const SizedBox(height: 16),
+
+                  // ── Raison chips ─────────────────────────────────────
+                  const Text('Raison :', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8, runSpacing: 6,
+                    children: kRaisonsSignalement.map((r) {
+                      final sel = selectedRaison == r;
+                      return ChoiceChip(
+                        label: Text(r, style: const TextStyle(fontSize: 12)),
+                        selected: sel,
+                        selectedColor: Colors.red.shade100,
+                        labelStyle: TextStyle(
+                            color: sel ? Colors.red.shade800 : Colors.black),
+                        onSelected: (_) => set(() {
+                          selectedRaison = sel ? null : r;
+                          if (!sel) messageCtrl.text = r;
+                        }),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ── Message field ────────────────────────────────────
+                  TextField(
+                    controller: messageCtrl,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      labelText: 'Message (optionnel)',
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      prefixIcon: const Icon(Icons.edit_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // ── Send button ──────────────────────────────────────
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: (selectedTargetId == null ||
+                          (selectedRaison == null &&
+                              messageCtrl.text.trim().isEmpty))
+                          ? null
+                          : () async {
+                        Navigator.pop(ctx);
+                        final ok = await AdminApi.sendSignalement(
+                          targetName: selectedTargetName!,
+                          targetType: targetType,
+                          raison:     selectedRaison ?? 'Autre',
+                          message:    messageCtrl.text.trim(),
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text(ok
+                                ? 'Signalement envoyé à $selectedTargetName'
+                                : 'Erreur lors de l\'envoi'),
+                            backgroundColor:
+                            ok ? Colors.red.shade700 : Colors.grey,
+                          ));
+                        }
+                      },
+                      icon: const Icon(Icons.send),
+                      label: const Text('Envoyer le signalement'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
-      ),
-    ),
+            ),
+          );
+        },
+      );
+    },
   );
 }
 
@@ -1242,8 +1391,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 _row(Icons.water_drop_outlined, 'Quantité', order['qty']),
                 _row(Icons.calendar_today_outlined, 'Date',
                     '${order['date']} à ${order['time']}'),
+
+                // ── Show driver name when Livré ──────────────────────────
+                if (order['status'] == 'Livré')
+                  _row(
+                    Icons.local_shipping_outlined,
+                    'Chauffeur',
+                    selDriverName.isNotEmpty ? selDriverName : 'Non assigné',
+                  ),
+
                 const SizedBox(height: 16),
-                if (_drivers.isNotEmpty) ...[
+
+                // ── Reassign dropdown: hide when Livré ───────────────────
+                if (_drivers.isNotEmpty &&
+                    order['status'] != 'Livré') ...[
                   const Text('Réassigner le chauffeur :',
                       style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
@@ -1291,14 +1452,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         }
                       },
                       icon: const Icon(Icons.cancel_outlined, color: Colors.red),
-                      label: const Text('Annuler',
-                          style: TextStyle(color: Colors.red)),
+                      label: const Text('Annuler'),  // removed forced red color so disabled style shows correctly
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: selDriverId.isEmpty
+                      onPressed: (selDriverId.isEmpty || order['status'] == 'Livré')
                           ? null
                           : () async {
                         final ok = await AdminApi.reassignChauffeur(
@@ -2472,72 +2632,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() { _zoneCtrl.dispose(); super.dispose(); }
 
-  void _showZonesDialog() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) => Padding(
-          padding: EdgeInsets.only(
-              left: 24, right: 24, top: 24,
-              bottom: MediaQuery.of(ctx).viewInsets.bottom + 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Zones de livraison',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              ..._zones.map((z) => ListTile(
-                dense: true,
-                leading: const Icon(Icons.location_on_outlined,
-                    color: Color(0xFF1E3A8A)),
-                title: Text(z),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline,
-                      color: Colors.red, size: 20),
-                  onPressed: () {
-                    setState(() => _zones.remove(z));
-                    setModal(() {});
-                  },
-                ),
-              )),
-              const Divider(),
-              Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _zoneCtrl,
-                    decoration: InputDecoration(
-                      hintText: 'Nouvelle zone...',
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: () {
-                    if (_zoneCtrl.text.trim().isNotEmpty) {
-                      setState(() => _zones.add(_zoneCtrl.text.trim()));
-                      setModal(() {});
-                      _zoneCtrl.clear();
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E3A8A),
-                      foregroundColor: Colors.white),
-                  child: const Text('Ajouter'),
-                ),
-              ]),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -2559,8 +2654,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _sectionHeader('Livraison'),
           _toggleTile(Icons.autorenew_outlined, 'Assignation automatique',
               _autoAssign, (v) => setState(() => _autoAssign = v)),
-          _actionTile(Icons.map_outlined,
-              'Gérer les zones (${_zones.length} actives)', _showZonesDialog),
           const SizedBox(height: 16),
           _sectionHeader('Compte administrateur'),
           _actionTile(Icons.lock_outline, 'Changer le mot de passe', () {

@@ -57,6 +57,8 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
   List<Polyline> _polylines     = [];
   List<Marker>   _markers       = [];
   List<Map<String, dynamic>> _realOrders = [];
+  String? _cancelledByClientCommandeId;
+  String? _cancelledByClientName;
   bool           _loadingRoutes = false;
   List<Map<String, dynamic>> _testChauffeurs = [];
   List<_RouteStop> _optimizedStops = [];
@@ -200,7 +202,50 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
       }
     });
   }
-
+  void _showCancelledByClientBanner(String clientName) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.cancel_outlined,
+                color: Colors.red, size: 24),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text('Commande annulée',
+                style: TextStyle(fontSize: 16)),
+          ),
+        ]),
+        content: Text(
+          'Le client "$clientName" a annulé sa commande.',
+          style: const TextStyle(fontSize: 14),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _rebuildRouteFromAccepted();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E3A8A),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Compris, mettre à jour l\'itinéraire'),
+          ),
+        ],
+      ),
+    );
+  }
   Future<void> _loadRealOrdersAsPreview() async {
     if (_loadingRoutes) return;
 
@@ -1504,22 +1549,7 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
               ]),
               const SizedBox(height: 16),
             ],
-            const Text('Montant à encaisser (DA)',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-            const SizedBox(height: 8),
-            TextField(
-              controller:   priceController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                prefixIcon:  const Icon(Icons.payments_outlined),
-                hintText:    'Ex: 1500',
-                suffixText:  'DA',
-                filled:      true,
-                fillColor:   Colors.grey.shade50,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
+
           ],
         ),
         actions: [
@@ -2089,7 +2119,20 @@ class ProviderHomeScreenState extends State<ProviderHomeScreen> {
           durationMin: stopDurationMap[stop.mongoId],
         );
       }).toList();
-
+// ── Check if any accepted order was cancelled by client ──
+      for (final stop in _optimizedStops) {
+        if (_orderStatus[stop.mongoId] == 'accepted') {
+          final stillExists = enrichedStops.any((s) => s.mongoId == stop.mongoId);
+          if (!stillExists) {
+            setState(() {
+              _cancelledByClientCommandeId = stop.mongoId;
+              _cancelledByClientName = stop.clientName;
+              _orderStatus[stop.mongoId] = 'rejected';
+            });
+            _showCancelledByClientBanner(stop.clientName);
+          }
+        }
+      }
       // ── 5. Set orderStatus using vrpConfirmedIds (captured BEFORE round-robin) ──
       final enrichedIds = enrichedStops.map((s) => s.mongoId).toSet();
       _orderStatus.removeWhere((id, _) => !enrichedIds.contains(id));
@@ -3173,8 +3216,8 @@ class _SimMarkerLayer extends StatelessWidget {
       markers: [
         Marker(
           point:  position,
-          width:  56,
-          height: 56,
+          width:  45,
+          height: 45,
           child: GestureDetector(
             onTap: onTap,
             child: Container(
@@ -3186,7 +3229,7 @@ class _SimMarkerLayer extends StatelessWidget {
                   BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3)),
                 ],
               ),
-              child: const Icon(Icons.local_shipping, color: Colors.white, size: 28),
+              child: const Icon(Icons.local_shipping, color: Colors.white, size: 20),
             ),
           ),
         ),

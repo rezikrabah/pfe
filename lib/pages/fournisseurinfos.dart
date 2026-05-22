@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:test2/fournisseur/provider_home_screen_FINAL.dart';
 import 'package:test2/services/api_service.dart';
-
+import 'package:test2/fournisseur/ChauffeurScreen.dart';
 // ─── Abonnement plans ───────────────────────────────────────────
 class _Plan {
   final String id;
@@ -63,7 +63,8 @@ String _generateRef(String planId) {
 }
 
 class fournisseurinfos extends StatefulWidget {
-  const fournisseurinfos({super.key});
+  final String role;
+  const fournisseurinfos({super.key, this.role = 'chauffeur'});
 
   @override
   State<fournisseurinfos> createState() => _fournisseurinfosState();
@@ -117,7 +118,10 @@ class _fournisseurinfosState extends State<fournisseurinfos> {
         );
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const ProviderHomeScreen()),
+          MaterialPageRoute(builder: (context) {
+            if (widget.role == 'gerant') return const ChauffeurScreen();
+            return const ProviderHomeScreen();
+          }),
         );
       }
     } catch (e) {
